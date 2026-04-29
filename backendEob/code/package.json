@@ -1,0 +1,48 @@
+{
+  "name": "chessverse_backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsc -b && node ./dist/index.js",
+    "build": "tsc -b",
+    "prisma:migrate": "prisma migrate dev --schema ./prisma/schema.prisma",
+    "prisma:generate": "prisma generate --schema ./prisma/schema.prisma",
+    "prisma:seed": "prisma db seed --schema ./prisma/schema.prisma",
+    "format": "prettier --write \"./**/*.{js,jsx,ts,tsx,json,css,md}\""
+  },
+  "prisma": {
+    "seed": "ts-node ./src/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.2.0",
+    "@prisma/client": "^7.2.0",
+    "@prisma/config": "^7.2.0",
+    "bcryptjs": "^3.0.3",
+    "chess.js": "^1.2.0",
+    "cookie": "^1.0.2",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "nanoid": "^3.3.7",
+    "pg": "^8.16.3",
+    "redis": "^5.0.1",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.1",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.9",
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.1",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/pg": "^8.16.0",
+    "@types/ws": "^8.18.1",
+    "prettier": "^3.7.4",
+    "prisma": "^7.2.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

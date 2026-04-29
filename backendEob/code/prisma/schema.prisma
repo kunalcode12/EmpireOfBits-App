@@ -1,0 +1,154 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+datasource db {
+  provider = "postgresql"
+}
+
+
+enum ChessLevel {
+  BEGINNER
+  INTERMEDIATE
+  PRO
+}
+enum RoomStatus {
+  WAITING
+  FULL
+  ACTIVE
+  FINISHED
+  CANCELLED
+}
+enum GameType {
+  ROOM 
+  RANDOM
+}
+enum ComputerDifficulty{
+  EASY
+  MEDIUM
+  HARD
+}
+enum GameStatus{
+  ACTIVE
+  FINISHED
+
+}
+model User {
+  id Int @default(autoincrement()) @id
+  name String
+  email String @unique
+  password String?
+  googleId String?
+  chessLevel ChessLevel
+  gamesWon Game[] @relation("GamesWon")
+  gamesLost Game[] @relation("GamesLost")
+  createdRooms Room[] @relation("CreatedRooms")
+  joinedRooms Room[] @relation("JoinedRooms")
+  computerGames ComputerGame[] @relation("UserComputerGames")
+  computerGamesWon ComputerGame[] @relation("ComputerGamesWon")
+  computerGamesLost ComputerGame[] @relation("ComputerGamesLost")
+  guestGamesAsP1 GuestGames[] @relation("GuestP1")
+  guestGamesAsP2 GuestGames[] @relation("GuestP2")
+
+}
+
+model Game {
+  id        Int      @id @default(autoincrement())
+  moves     Json @default("[]")
+  currentFen String
+  winnerId  Int? 
+  loserId   Int? 
+  chat      Json[]  // optional chat history
+  whiteTimeLeft Int       @default(600)  // seconds remaining
+  blackTimeLeft Int       @default(600)
+  lastMoveAt    DateTime?                // when last move was made
+  lastMoveBy    String?                  // 'w' or 'b'  
+  draw      Boolean  @default(false)
+  room      Room?   @relation(fields: [roomId], references: [id])
+  roomId    Int? @unique
+  type GameType @default(ROOM)
+  winner User? @relation("GamesWon", references: [id],fields: [winnerId])
+  loser User? @relation("GamesLost", references: [id],fields: [loserId])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt 
+  endedAt DateTime? 
+  capturedPieces String[] @default([])
+  status GameStatus @default(ACTIVE)
+
+}
+
+model ComputerGame{
+  id        Int      @id @default(autoincrement())
+  userId    Int 
+  user      User @relation("UserComputerGames",fields:[userId],references:[id])
+  winnerId  Int?
+  winner    User? @relation("ComputerGamesWon",fields:[winnerId],references:[id])
+  loserId   Int?
+  loser     User? @relation("ComputerGamesLost",fields:[loserId],references:[id])
+  draw      Boolean @default(false)
+  computerDifficulty ComputerDifficulty @default(EASY)
+  playerColor String  // "w" | "b"
+  status    GameStatus 
+  endedAt   DateTime? 
+  lastMoveBy String?  
+  currentFen String
+  moves     Json @default("[]")
+  capturedPieces String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model GuestGames{
+  id Int @id @default(autoincrement())
+  player1GuestId String
+  player2GuestId String
+
+  player1UserId Int? 
+  player2UserId Int? 
+
+  player1Color String  // "w" | "b" - player2 gets the opposite
+
+  status GameStatus @default(ACTIVE)
+  draw Boolean @default(false)
+  winner String?
+  loser String? // Player1 or Player2
+
+  player1TimeLeft Int @default(600)
+  player2TimeLeft Int @default(600)
+
+  moves Json @default("[]")
+  capturedPieces String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  endedAt DateTime?
+
+  lastMoveBy String?
+  currentFen String
+  player1DrawOfferCount Int @default(3)
+  player2DrawOfferCount Int @default(3)
+  // Optional Relation if the guest converts into logged in users
+  player1 User? @relation("GuestP1",fields:[player1UserId],references:[id])
+  player2 User? @relation("GuestP2",fields:[player2UserId],references:[id])
+
+}
+
+
+model Room{
+  id Int @id @default(autoincrement())
+  code String @unique
+  createdById Int
+  joinedById Int?
+  status RoomStatus @default(WAITING)  
+  createdBy User @relation("CreatedRooms",fields: [createdById],references: [id])
+  joinedBy User? @relation("JoinedRooms",fields: [joinedById],references: [id])
+  game Game?
+  createdAt DateTime @default(now())
+  updatedAt   DateTime   @updatedAt
+
+}
