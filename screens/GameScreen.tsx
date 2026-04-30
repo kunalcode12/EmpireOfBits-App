@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChessBoard } from '../components/ChessBoard';
 import { ChessPiece } from '../components/ChessPiece';
 import { DrawResignControls } from '../components/DrawResignControls';
@@ -32,15 +32,69 @@ export function GameScreen() {
     () => [...game.chat].sort((a, b) => a.timestamp - b.timestamp).slice(-20),
     [game.chat],
   );
+  const checkOpacity = useRef(new Animated.Value(0)).current;
+  const checkTranslateY = useRef(new Animated.Value(-8)).current;
 
   useEffect(() => {
     if (!game.toast) return undefined;
     const id = setTimeout(game.clearToast, 2200);
     return () => clearTimeout(id);
-  }, [game]);
+  }, [game.toast, game.clearToast]);
+
+  useEffect(() => {
+    if (!game.checkAlert) return undefined;
+    checkOpacity.setValue(0);
+    checkTranslateY.setValue(-8);
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(checkOpacity, {
+          toValue: 1,
+          duration: 170,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(checkTranslateY, {
+          toValue: 0,
+          duration: 170,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.delay(1500),
+      Animated.parallel([
+        Animated.timing(checkOpacity, {
+          toValue: 0,
+          duration: 280,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(checkTranslateY, {
+          toValue: -8,
+          duration: 280,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+    const id = setTimeout(game.clearCheckAlert, 2000);
+    return () => clearTimeout(id);
+  }, [game.checkAlertToken, game.checkAlert, game.clearCheckAlert, checkOpacity, checkTranslateY]);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      {game.checkAlert && (
+        <Animated.View
+          style={[
+            styles.checkBannerWrap,
+            {
+              opacity: checkOpacity,
+              transform: [{ translateY: checkTranslateY }],
+            },
+          ]}
+        >
+          <Text style={styles.checkBannerText}>Check</Text>
+        </Animated.View>
+      )}
       {game.opponentDisconnected && <Text style={styles.banner}>Opponent disconnected - waiting for them to return...</Text>}
       <View style={styles.playerRow}>
         <View>
@@ -197,6 +251,23 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     padding: spacing.md,
     fontWeight: '800',
+    textAlign: 'center',
+  },
+  checkBannerWrap: {
+    backgroundColor: '#4a3f1f',
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: '#8a7442',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  checkBannerText: {
+    color: '#f7e8b0',
+    fontWeight: '900',
     textAlign: 'center',
   },
   playerRow: {

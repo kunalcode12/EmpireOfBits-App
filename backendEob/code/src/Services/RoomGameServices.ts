@@ -149,6 +149,33 @@ export async function handleRoomMove(
     return;
   }
   const opponentSocket = socketManager.get(opponentId);
+  const validMoves = provideValidMoves(chess.fen());
+
+  const oppPayload = {
+    type: RoomMessages.ROOM_MOVE,
+    payload: {
+      move,
+      turn: chess.turn(),
+      fen: chess.fen(),
+      validMoves,
+      capturedPiece,
+    },
+  };
+  const currentPlayerPayload = {
+    type: RoomMessages.ROOM_MOVE,
+    payload: {
+      move,
+      turn: chess.turn(),
+      fen: chess.fen(),
+      validMoves,
+      capturedPiece,
+    },
+  };
+
+  // Send the latest board snapshot before terminal checks.
+  // This prevents loser-side freeze if ROOM_GAME_OVER is delayed/dropped.
+  userSocket.send(JSON.stringify(currentPlayerPayload));
+  opponentSocket?.send(JSON.stringify(oppPayload));
 
   if (chess.isStalemate()) {
     await handleRoomDraw(
@@ -186,11 +213,8 @@ export async function handleRoomMove(
   // Game Over logic
   if (chess.isGameOver()) {
     const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
-    const loserColor = winnerColor === 'b' ? 'w' : 'b';
-    const winnerId =
-      winnerColor === 'w' ? existingGame.user1 : existingGame.user2;
-    const loserId =
-      winnerColor === 'b' ? existingGame.user2 : existingGame.user1;
+    const winnerId = Number(userId);
+    const loserId = Number(opponentId);
 
     // 1. Get all final data from Redis before deleting
     const [final_moves, final_chat, final_CapturedPieces] = await Promise.all([
@@ -243,11 +267,8 @@ export async function handleRoomMove(
     await redis.hIncrBy(`stats`, 'roomGamesCount', 1);
 
     // 4. Send Messages
-    const winnerSocket = socketManager.get(winnerId);
-    const loserSocket = socketManager.get(loserId);
-
     sendMessage(
-      winnerSocket,
+      userSocket,
       JSON.stringify({
         type: RoomMessages.ROOM_GAME_OVER,
         payload: {
@@ -260,7 +281,7 @@ export async function handleRoomMove(
     );
 
     sendMessage(
-      loserSocket,
+      opponentSocket,
       JSON.stringify({
         type: RoomMessages.ROOM_GAME_OVER,
         payload: {
@@ -274,49 +295,15 @@ export async function handleRoomMove(
 
     return;
   }
-  const validMoves = provideValidMoves(chess.fen());
-
-  const oppPayload = {
-    type: RoomMessages.ROOM_MOVE,
-    payload: {
-      move,
-      turn: chess.turn(),
-      fen: chess.fen(),
-      validMoves,
-      capturedPiece,
-    },
-  };
-  const currentPlayerPayload = {
-    type: RoomMessages.ROOM_MOVE,
-    payload: {
-      move,
-      turn: chess.turn(),
-      fen: chess.fen(),
-      validMoves,
-      capturedPiece,
-    },
-  };
-
-  userSocket.send(JSON.stringify(currentPlayerPayload));
-  opponentSocket?.send(JSON.stringify(oppPayload));
 
   if (chess.isCheck()) {
-    const attackerCheckMessage = {
-      type: GameMessages.CHECK,
-      payload: {
-        message:
-          "Check! You\'ve put the opposing King under fire. The pressure is on them now!",
-      },
-    };
-
     const defenderCheckMessage = {
       type: GameMessages.CHECK,
       payload: {
-        message: 'You are in Check! Defend your King immediately. Your move.',
+        message: 'Check',
       },
     };
 
-    userSocket.send(JSON.stringify(attackerCheckMessage));
     opponentSocket?.send(JSON.stringify(defenderCheckMessage));
 
     return;
