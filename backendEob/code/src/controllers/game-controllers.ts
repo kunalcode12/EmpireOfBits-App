@@ -1,16 +1,18 @@
 import express, { Request, Response } from 'express';
 // import {v4 as uuidv4} from "uuid"
-import { getStats } from '../Services/GameServices';
-import { authMiddleware } from '../middleware';
-import pc from '../clients/prismaClient';
 import { Chess } from 'chess.js';
-import { redis } from '../clients/redisClient';
-import { ComputerGameMessages } from '../utils/messages';
 import {
   getComputerGameState,
   handlePlayerQuit,
 } from '../Services/ComputerGameServices';
-import { ComputerDifficulty } from '../generated/prisma/enums';
+import { getStats } from '../Services/GameServices';
+import pc from '../clients/prismaClient';
+import { redis } from '../clients/redisClient';
+import { authMiddleware } from '../middleware';
+import { ComputerGameMessages } from '../utils/messages';
+
+type ComputerDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
+
 const gameRouter = express.Router();
 const ALLOWED_DIFFICULTIES: ComputerDifficulty[] = ['EASY', 'MEDIUM', 'HARD'];
 
@@ -158,3 +160,4 @@ gameRouter.patch(
 );
 
 export { gameRouter };
+

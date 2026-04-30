@@ -1,27 +1,26 @@
-import WebSocket from 'ws';
-import { GameMessages, RoomMessages, ErrorMessages } from '../utils/messages';
 import { Chess } from 'chess.js';
-import { redis } from '../clients/redisClient';
+import { nanoid } from 'nanoid';
+import WebSocket from 'ws';
 import pc from '../clients/prismaClient';
+import { redis } from '../clients/redisClient';
+import {
+  MatchmakingPreferences,
+  insertPlayerInQueue,
+  matchingPlayer,
+  removePlayerFromQueue
+} from '../Services/MatchMaking';
 import {
   handleRoomChat,
+  handleRoomDrawAcceptance,
+  handleRoomDrawOffer,
+  handleRoomDrawRejection,
   handleRoomGameLeave,
   handleRoomMove,
   handleRoomReconnection,
-  handleRoomDrawOffer,
-  handleRoomDrawAcceptance,
-  handleRoomDrawRejection,
-  handleRoomTakeback,
-  validateRoomGamePayload,
+  handleRoomTakeback
 } from '../Services/RoomGameServices';
-import provideValidMoves, { parseChat, sendMessage } from '../utils/chessUtils';
-import { 
-  MatchmakingPreferences, 
-  matchingPlayer, 
-  insertPlayerInQueue, 
-  removePlayerFromQueue 
-} from '../Services/MatchMaking';
-import { nanoid } from 'nanoid';
+import provideValidMoves, { parseChat } from '../utils/chessUtils';
+import { ErrorMessages, GameMessages, RoomMessages } from '../utils/messages';
 
 interface RestoredGameState {
   user1: number;
@@ -161,10 +160,31 @@ class RoomManager {
 
   async handleRoomTimeExpired(game: Record<string, string>, gameId: string, whiteTimer: number, blackTimer: number) {
     try {
+      // Defensive guard: never process timeout unless a clock actually reached zero.
+      if (whiteTimer > 0 && blackTimer > 0) {
+        return;
+      }
+      if (!Number.isFinite(whiteTimer) || !Number.isFinite(blackTimer)) {
+        console.log(`[Room Timeout] skipped due to invalid timers for game ${gameId}`, { whiteTimer, blackTimer });
+        return;
+      }
+      // If game was already finished/cancelled by resign/draw/other flow, ignore timeout handling.
+      if (game.status && game.status !== RoomMessages.ROOM_GAME_ACTIVE) {
+        return;
+      }
+
       const winnerId = whiteTimer <= 0 ? Number(game.user2) : Number(game.user1);
       const loserId = whiteTimer <= 0 ? Number(game.user1) : Number(game.user2);
       const winnerColor = winnerId === Number(game.user1) ? 'w' : 'b';
       const roomCode = game.roomCode;
+
+      const roomFromDb = await pc.room.findUnique({
+        where: { code: roomCode },
+        select: { status: true, game: { select: { status: true } } },
+      });
+      if (!roomFromDb || roomFromDb.status !== 'ACTIVE' || roomFromDb.game?.status !== 'ACTIVE') {
+        return;
+      }
 
       const chatArr = await parseChat(`room-game:${gameId}:chat`);
       const moves = game.moves ? JSON.parse(game.moves) : [];
@@ -256,7 +276,7 @@ class RoomManager {
           }
 
           const prefs: MatchmakingPreferences = { timeControl, colorPreference, isGuest: false };
-          const match = await matchingPlayer(userId.toString(), prefs);
+          let match = await matchingPlayer(userId.toString(), prefs);
 
           if (!match) {
             const inserted = await insertPlayerInQueue(userId.toString(), prefs);
@@ -265,7 +285,11 @@ class RoomManager {
               return;
             }
             await this.checkQueueAndSendMessage();
-            return;
+            // Handle simultaneous enqueue race:
+            // if both users queued almost at the same time, re-check immediately.
+            match = await matchingPlayer(userId.toString(), prefs);
+            if (!match) return;
+            await removePlayerFromQueue(userId.toString(), false);
           }
 
           // Match found!

@@ -1,13 +1,13 @@
-import { WebSocket } from 'ws';
-import { GameMessages, ErrorMessages } from '../utils/messages';
-import { redis } from '../clients/redisClient';
 import { Chess, PieceSymbol } from 'chess.js';
+import { WebSocket } from 'ws';
+import { gameManager } from '../Classes/GameManager';
+import pc from '../clients/prismaClient';
+import { redis } from '../clients/redisClient';
 import provideValidMoves, {
   MOVE_BEFORE_SAFE,
   parseMoves,
 } from '../utils/chessUtils';
-import { gameManager } from '../Classes/GameManager';
-import pc from '../clients/prismaClient';
+import { ErrorMessages, GameMessages } from '../utils/messages';
 
 //This Method Will Help To return the gameState to reconnected player
 export async function getGameState(gameId: string) {

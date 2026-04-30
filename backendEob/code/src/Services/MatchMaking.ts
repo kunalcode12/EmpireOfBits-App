@@ -64,6 +64,10 @@ export async function matchingPlayer(playerId: string, prefs: MatchmakingPrefere
     
     if (result) {
       const opponentId = result.value;
+      if (opponentId === playerId) {
+        await redis.zAdd(queueKey, { value: opponentId, score: result.score });
+        continue;
+      }
       const opponentPref = queueKey.split(':').pop();
 
       let whitePlayerId = '';

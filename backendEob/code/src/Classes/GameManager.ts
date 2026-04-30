@@ -1,6 +1,7 @@
-import { redis } from '../clients/redisClient';
+import { Chess } from 'chess.js';
 import { WebSocket } from 'ws';
-import { GameMessages, ErrorMessages } from '../utils/messages';
+import pc from '../clients/prismaClient';
+import { redis } from '../clients/redisClient';
 import {
   acceptDraw,
   getGameState,
@@ -17,11 +18,10 @@ import {
   matchingPlayer,
   removePlayerFromQueue,
 } from '../Services/MatchMaking';
-import { Chess } from 'chess.js';
 import provideValidMoves, {
   parseMoves,
 } from '../utils/chessUtils';
-import pc from '../clients/prismaClient';
+import { ErrorMessages, GameMessages } from '../utils/messages';
 export class GameManager {
   private socketMap: Map<string, WebSocket> = new Map();
   private globalSetInterval: NodeJS.Timeout | null = null;
@@ -501,7 +501,7 @@ export class GameManager {
         }
 
         const prefs: MatchmakingPreferences = { timeControl, colorPreference, isGuest: true };
-        const matchFound = await matchingPlayer(id, prefs);
+        let matchFound = await matchingPlayer(id, prefs);
 
         if (!matchFound) {
           const inserted = await insertPlayerInQueue(id, prefs);
@@ -518,7 +518,10 @@ export class GameManager {
             return;
           }
           await this.checkQueueAndSendMessage();
-          return;
+          // Handle simultaneous enqueue race for guest matchmaking too.
+          matchFound = await matchingPlayer(id, prefs);
+          if (!matchFound) return;
+          await removePlayerFromQueue(id, true);
         }
 
         const matchedPlayerId = matchFound.opponentId;

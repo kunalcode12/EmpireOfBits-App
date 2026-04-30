@@ -13,6 +13,7 @@ export function ResultScreen() {
     <View style={styles.screen}>
       <Text style={styles.headline}>{headline}</Text>
       <Text style={styles.reason}>{result?.reason ?? 'Game finished'}</Text>
+      {result?.message ? <Text style={styles.message}>{result.message}</Text> : null}
       <View style={styles.stats}>
         <Stat label="Moves" value={String(result?.moves ?? game.moves.length)} />
         <Stat label="Duration" value={formatClock(result?.durationSeconds ?? 0)} />
@@ -55,6 +56,12 @@ const styles = StyleSheet.create({
     fontSize: typography.heading,
     fontWeight: '800',
     marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  message: {
+    color: colors.text,
+    fontSize: typography.body,
+    textAlign: 'center',
     marginBottom: spacing.xl,
   },
   stats: {

@@ -1,8 +1,7 @@
-import WebSocket from 'ws';
-import { ErrorMessages, ComputerGameMessages } from '../utils/messages';
 import { Chess } from 'chess.js';
-import { redis } from '../clients/redisClient';
+import WebSocket from 'ws';
 import pc from '../clients/prismaClient';
+import { redis } from '../clients/redisClient';
 import {
   getComputerMove,
   handleComputerMove,
@@ -12,6 +11,7 @@ import {
 } from '../Services/ComputerGameServices';
 import { Move } from '../Services/GameServices';
 import provideValidMoves, { delay } from '../utils/chessUtils';
+import { ComputerGameMessages, ErrorMessages } from '../utils/messages';
 
 class ComputerGameManager {
   globalSetInterval: NodeJS.Timeout | null = null;

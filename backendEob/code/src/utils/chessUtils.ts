@@ -1,10 +1,10 @@
 //this file will contain the helper function for chess games
 
+import { InputJsonValue } from '@prisma/client/runtime/client';
 import { Chess } from 'chess.js';
+import WebSocket from 'ws';
 import pc from '../clients/prismaClient';
 import { redis } from '../clients/redisClient';
-import WebSocket from 'ws';
-import { InputJsonValue } from '@prisma/client/runtime/client';
 export const MOVE_BEFORE_SAFE = 5;
 export const GUEST_MATCHMAKING_KEY =
   process.env.GUEST_MATCHING_KEY || 'guest:game:queue';

@@ -3,8 +3,8 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
-import { AuthProvider } from './store/AuthContext';
-import { GameProvider } from './store/GameContext';
+import { AuthProvider } from '../store/AuthContext';
+import { GameProvider } from '../store/GameContext';
 
 export const unstable_settings = {
   anchor: 'index',

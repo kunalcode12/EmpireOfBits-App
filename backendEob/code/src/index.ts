@@ -1,4 +1,3 @@
-import './config/env';
 import * as cookie from 'cookie';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -11,6 +10,7 @@ import { computerGameManager } from './Classes/ComputerGameManager';
 import { gameManager } from './Classes/GameManager';
 import { roomManager } from './Classes/RoomManager';
 import { redis } from './clients/redisClient';
+import './config/env';
 import { gameRouter } from './controllers/game-controllers';
 import { router } from './controllers/user-controller';
 import { ErrorMessages } from './utils/messages';

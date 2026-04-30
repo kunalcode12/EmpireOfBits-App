@@ -1,13 +1,13 @@
 import React from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { colors } from './constants/theme';
-import { useAuth } from './store/AuthContext';
-import { useGame } from './store/GameContext';
-import { AuthScreen } from './screens/AuthScreen';
-import { GameScreen } from './screens/GameScreen';
-import { LobbyScreen } from './screens/LobbyScreen';
-import { MatchmakingScreen } from './screens/MatchmakingScreen';
-import { ResultScreen } from './screens/ResultScreen';
+import { colors } from '../constants/theme';
+import { useAuth } from '../store/AuthContext';
+import { useGame } from '../store/GameContext';
+import { AuthScreen } from '../screens/AuthScreen';
+import { GameScreen } from '../screens/GameScreen';
+import { LobbyScreen } from '../screens/LobbyScreen';
+import { MatchmakingScreen } from '../screens/MatchmakingScreen';
+import { ResultScreen } from '../screens/ResultScreen';
 
 export default function AppIndex() {
   const auth = useAuth();

@@ -34,6 +34,7 @@ export interface Timers {
 export interface GameResult {
   result: 'win' | 'lose' | 'draw';
   reason: string;
+  message?: string;
   moves: number;
   durationSeconds: number;
 }
@@ -190,6 +191,7 @@ const reducer = (state: GameState, action: GameAction): GameState => {
       const result: GameResult = {
         result: payloadResult === 'draw' ? 'draw' : payloadResult === 'lose' ? 'lose' : action.payload.winner === 'draw' ? 'draw' : 'win',
         reason: resultReason(action.payload),
+        message: action.payload.message,
         moves: state.moves.length,
         durationSeconds: state.startedAt ? Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000)) : 0,
       };
