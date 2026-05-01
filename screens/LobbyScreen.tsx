@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import React, { useRef, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { useAuth } from '../store/AuthContext';
 import { useGame } from '../store/GameContext';
@@ -8,60 +10,133 @@ import type { ColorPreference, TimeControl } from '../websockets/gameSocket';
 export function LobbyScreen() {
   const auth = useAuth();
   const game = useGame();
-  const [timeControl, setTimeControl] = useState<TimeControl | null>(null);
-  const [colorPreference, setColorPreference] = useState<ColorPreference | null>(null);
+  const blurTargetRef = useRef<View | null>(null);
+  const [timeControl, setTimeControl] = useState<TimeControl | null>('5');
+  const [colorPreference, setColorPreference] = useState<ColorPreference | null>('w');
+  const [timeModalOpen, setTimeModalOpen] = useState(false);
   const ready = Boolean(timeControl && colorPreference);
+  const timeLabel = timeControl === '10' ? '10 min' : '5 min';
+  const timeIcon = timeControl === '10' ? 'clock-time-five' : 'lightning-bolt';
 
   return (
     <View style={styles.screen}>
-      <Pattern />
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>Signed in as</Text>
-          <Text style={styles.title}>{auth.user?.username ?? 'Player'}</Text>
+      <View ref={blurTargetRef} style={styles.screenContent}>
+        <Pattern />
+        <View style={styles.topContent}>
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.eyebrow}>Signed in as</Text>
+              <Text style={styles.title}>{auth.user?.username ?? 'Player'}</Text>
+            </View>
+            <Pressable style={styles.logout} onPress={auth.logout}>
+              <Text style={styles.logoutText}>Logout</Text>
+            </Pressable>
+          </View>
+          <View style={styles.section}>
+            <View style={styles.options}>
+              <Pressable style={[styles.selectorRow, styles.timeRow]} onPress={() => setTimeModalOpen(true)}>
+                <View pointerEvents="none" style={styles.timeRowGlowTop} />
+                <View pointerEvents="none" style={styles.timeRowGlowBottom} />
+                <View style={styles.selectorRowLeft}>
+                  <MaterialCommunityIcons name={timeIcon} size={16} color="#f6c849" />
+                  <Text style={styles.selectorText}>{timeLabel}</Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={18} color={colors.mutedText} />
+              </Pressable>
+              <View style={styles.randomRow}>
+                <View style={styles.randomDivider} />
+                <View style={styles.randomRowLeft}>
+                  <MaterialCommunityIcons name="account-group-outline" size={16} color={colors.mutedText} />
+                  <Text style={styles.randomText}>vs Random</Text>
+                </View>
+                <View style={styles.randomDivider} />
+              </View>
+            </View>
+          </View>
+
+          <View style={[styles.section, styles.colorSection]}>
+            <View style={styles.colorCard}>
+              <View style={styles.colorRow}>
+                <Text style={styles.colorLabel}>I Play as</Text>
+                <View style={styles.colorButtons}>
+                  <Pressable
+                    style={[styles.colorButton, styles.whiteButton, colorPreference === 'w' && styles.colorButtonSelected]}
+                    onPress={() => setColorPreference('w')}
+                  >
+                    <MaterialCommunityIcons name="chess-king" size={34} color="#1e1e1e" />
+                  </Pressable>
+                  <Pressable
+                    style={[styles.colorButton, styles.randomButton, colorPreference === 'r' && styles.colorButtonSelected]}
+                    onPress={() => setColorPreference('r')}
+                  >
+                    <View style={styles.randomSplitWrap}>
+                      <View style={styles.randomHalfLight} />
+                      <View style={styles.randomHalfDark} />
+                    </View>
+                    <Text style={styles.randomQuestion}>?</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.colorButton, styles.blackButton, colorPreference === 'b' && styles.colorButtonSelected]}
+                    onPress={() => setColorPreference('b')}
+                  >
+                    <MaterialCommunityIcons name="chess-king" size={34} color="#e8e8e8" />
+                  </Pressable>
+                </View>
+              </View>
+              <View style={styles.colorDivider} />
+            </View>
+          </View>
+
+          {game.toast && <Text style={styles.toast}>{game.toast}</Text>}
         </View>
-        <Pressable style={styles.logout} onPress={auth.logout}>
-          <Text style={styles.logoutText}>Logout</Text>
-        </Pressable>
+        <View style={styles.playFooter}>
+          <Pressable
+            disabled={!ready}
+            style={[styles.play, !ready && styles.disabled]}
+            onPress={() => {
+              if (timeControl && colorPreference) void game.startMatchmaking(timeControl, colorPreference);
+            }}
+          >
+            <Text style={styles.playText}>Play</Text>
+          </Pressable>
+        </View>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Time Control</Text>
-        <View style={styles.options}>
-          <Option selected={timeControl === '5'} title="5 minutes" subtitle="Blitz" onPress={() => setTimeControl('5')} />
-          <Option selected={timeControl === '10'} title="10 minutes" subtitle="Rapid" onPress={() => setTimeControl('10')} />
+      <Modal visible={timeModalOpen} transparent animationType="fade" onRequestClose={() => setTimeModalOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <BlurView intensity={45} tint="dark" blurMethod="dimezisBlurView" blurTarget={blurTargetRef} style={styles.modalBlur} />
+          <View style={styles.modalScrim} />
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Choose Time Control</Text>
+              <Pressable style={styles.modalClose} onPress={() => setTimeModalOpen(false)}>
+                <Text style={styles.modalCloseText}>X</Text>
+              </Pressable>
+            </View>
+            <Pressable
+              style={[styles.modalOption, timeControl === '5' && styles.modalOptionSelected]}
+              onPress={() => {
+                setTimeControl('5');
+                setTimeModalOpen(false);
+              }}
+            >
+              <MaterialCommunityIcons name="lightning-bolt" size={16} color="#f6c849" />
+              <Text style={styles.modalOptionText}>5 min</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalOption, timeControl === '10' && styles.modalOptionSelected]}
+              onPress={() => {
+                setTimeControl('10');
+                setTimeModalOpen(false);
+              }}
+            >
+              <MaterialCommunityIcons name="clock-time-five" size={16} color="#9cc8ff" />
+              <Text style={styles.modalOptionText}>10 min</Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Colour</Text>
-        <View style={styles.options}>
-          <Option selected={colorPreference === 'w'} title="White" subtitle="Move first" onPress={() => setColorPreference('w')} />
-          <Option selected={colorPreference === 'b'} title="Black" subtitle="Defend first" onPress={() => setColorPreference('b')} />
-          <Option selected={colorPreference === 'r'} title="Random" subtitle="Either side" onPress={() => setColorPreference('r')} />
-        </View>
-      </View>
-
-      {game.toast && <Text style={styles.toast}>{game.toast}</Text>}
-      <Pressable
-        disabled={!ready}
-        style={[styles.play, !ready && styles.disabled]}
-        onPress={() => {
-          if (timeControl && colorPreference) void game.startMatchmaking(timeControl, colorPreference);
-        }}
-      >
-        <Text style={styles.playText}>Play</Text>
-      </Pressable>
+      </Modal>
     </View>
-  );
-}
-
-function Option({ selected, title, subtitle, onPress }: { selected: boolean; title: string; subtitle: string; onPress: () => void }) {
-  return (
-    <Pressable style={[styles.option, selected && styles.optionSelected]} onPress={onPress}>
-      <Text style={styles.optionTitle}>{title}</Text>
-      <Text style={styles.optionSubtitle}>{subtitle}</Text>
-    </Pressable>
   );
 }
 
@@ -77,8 +152,21 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  screenContent: {
+    flex: 1,
+  },
+  topContent: {
+    flex: 1,
+    backgroundColor: colors.surface,
     padding: spacing.xl,
-    justifyContent: 'center',
+    paddingBottom: spacing.md,
+  },
+  playFooter: {
+    backgroundColor: colors.background,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
   },
   pattern: {
     ...StyleSheet.absoluteFillObject,
@@ -126,34 +214,172 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: spacing.xl,
   },
+  colorSection: {
+    marginTop: -6,
+  },
   sectionTitle: {
     color: colors.text,
     fontSize: typography.heading,
     fontWeight: '900',
     marginBottom: spacing.md,
   },
-  options: {
-    gap: spacing.md,
-  },
-  option: {
-    borderRadius: radii.md,
+  selectorRow: {
+    position: 'relative',
+    minHeight: 46,
+    borderRadius: radii.sm,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    padding: spacing.lg,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  optionSelected: {
+  timeRow: {
+    overflow: 'hidden',
+    borderColor: '#4a4642',
+    backgroundColor: '#3b3835',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  timeRowGlowTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '45%',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  timeRowGlowBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '35%',
+    backgroundColor: 'rgba(0,0,0,0.16)',
+  },
+  selectorRowSelected: {
     borderColor: colors.accent,
     backgroundColor: '#2f3927',
   },
-  optionTitle: {
-    color: colors.text,
-    fontSize: typography.body,
-    fontWeight: '900',
+  selectorRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
-  optionSubtitle: {
+  selectorText: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: typography.body,
+  },
+  randomRow: {
+    minHeight: 78,
+    justifyContent: 'center',
+    paddingHorizontal: 0,
+    gap: spacing.xl,
+    backgroundColor: colors.surface,
+  },
+  randomDivider: {
+    height: 1,
+    marginHorizontal: 0,
+    backgroundColor: colors.border,
+    opacity: 0.7,
+  },
+  randomRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  randomText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: typography.body,
+  },
+  options: {
+    gap: spacing.md,
+  },
+  colorCard: {
+    borderRadius: radii.sm,
+    backgroundColor: colors.surface,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.sm,
+    gap: spacing.lg,
+  },
+  colorDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginHorizontal: 0,
+    opacity: 0.8,
+  },
+  colorRow: {
+    minHeight: 54,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  colorLabel: {
     color: colors.mutedText,
-    marginTop: 3,
+    fontSize: typography.body,
+    fontWeight: '700',
+  },
+  colorButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  colorButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  colorButtonSelected: {
+    borderColor: '#4f682d',
+    borderWidth: 3.2,
+    shadowColor: '#4f682d',
+    shadowOpacity: 0.35,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 5,
+  },
+  whiteButton: {
+    backgroundColor: '#f1f1f1',
+    borderColor: '#8c8c8c',
+  },
+  randomButton: {
+    borderColor: '#8c8c8c',
+    backgroundColor: '#2e2e2e',
+  },
+  blackButton: {
+    backgroundColor: '#080808',
+    borderColor: '#2b2b2b',
+  },
+  randomSplitWrap: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+  },
+  randomHalfLight: {
+    flex: 1,
+    backgroundColor: '#f3f3f3',
+  },
+  randomHalfDark: {
+    flex: 1,
+    backgroundColor: '#111',
+  },
+  randomQuestion: {
+    color: '#1f1f1f',
+    fontSize: 34,
+    fontWeight: '900',
+    textShadowColor: 'rgba(255,255,255,0.3)',
+    textShadowRadius: 1,
   },
   toast: {
     color: colors.warning,
@@ -175,5 +401,74 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: typography.heading,
     fontWeight: '900',
+  },
+  modalBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+    position: 'relative',
+  },
+  modalBlur: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  modalTitle: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.body,
+    marginBottom: 2,
+  },
+  modalClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseText: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.small,
+  },
+  modalOption: {
+    minHeight: 44,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  modalOptionSelected: {
+    borderColor: colors.accent,
+    backgroundColor: '#2f3927',
+  },
+  modalOptionText: {
+    color: colors.text,
+    fontWeight: '800',
   },
 });

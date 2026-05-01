@@ -247,8 +247,10 @@ const reducer = (state: GameState, action: GameAction): GameState => {
       return { ...state, drawOfferIncoming: true };
     case 'DRAW_MODAL_CLOSE':
       return { ...state, drawOfferIncoming: false };
-    case 'DRAW_REJECTED':
-      return { ...state, drawOfferIncoming: false, toast: action.message };
+    case 'DRAW_REJECTED': {
+      const rejectionText = state.opponentName ? `${state.opponentName} rejected your draw offer` : action.message;
+      return { ...state, drawOfferIncoming: false, toast: rejectionText };
+    }
     case 'OPP_DISCONNECTED':
       return { ...state, opponentDisconnected: true, toast: action.message };
     case 'CHAT_MESSAGE':
