@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { useMatchmaking } from '../hooks/useMatchmaking';
@@ -16,43 +16,59 @@ export function MatchmakingScreen() {
 
   return (
     <View style={styles.screen}>
-      <LoadingSpinner />
-      <Text style={styles.title}>{timedOut ? 'No opponent found' : `Searching... ${formatElapsed(matchmaking.elapsed)}`}</Text>
-      <Text style={styles.subtitle}>
-        {timedOut ? 'The queue is quiet for that setup.' : `${game.timeControl} minute game, ${labelForColor(game.colorPreference)} pieces`}
-      </Text>
-      {timedOut ? (
-        <Pressable style={styles.primary} onPress={() => void matchmaking.retry()}>
-          <Text style={styles.primaryText}>Try Again</Text>
-        </Pressable>
-      ) : (
-        <Pressable style={styles.secondary} onPress={matchmaking.cancel}>
-          <Text style={styles.secondaryText}>Cancel</Text>
-        </Pressable>
-      )}
+      <ImageBackground source={require('../assets/images/board.png')} style={styles.boardPanel} resizeMode="cover" blurRadius={1}>
+        <View style={styles.backgroundBlur} />
+      </ImageBackground>
+      <View style={styles.content}>
+        <LoadingSpinner />
+        <Text style={styles.title}>{timedOut ? 'No Opponent Found' : `Searching  ${formatElapsed(matchmaking.elapsed)}`}</Text>
+        {timedOut && <Text style={styles.subtitle}>The queue is quiet for that setup.</Text>}
+        {timedOut ? (
+          <Pressable style={styles.primary} onPress={() => void matchmaking.retry()}>
+            <Text style={styles.primaryText}>Try Again</Text>
+          </Pressable>
+        ) : (
+          <Pressable style={styles.secondary} onPress={matchmaking.cancel}>
+            <Text style={styles.secondaryText}>Cancel</Text>
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 }
 
-const labelForColor = (preference: string | null) => {
-  if (preference === 'w') return 'white';
-  if (preference === 'b') return 'black';
-  return 'random';
-};
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
+    backgroundColor: colors.surface,
+  },
+  boardPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '10%',
+    bottom: '10%',
+    overflow: 'hidden',
+  },
+  backgroundBlur: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.01)',
+  },
+  content: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.background,
     padding: spacing.xl,
   },
   title: {
-    color: colors.text,
+    color: '#f0d9b5',
     fontSize: typography.heading,
     fontWeight: '900',
-    marginTop: spacing.xl,
+    marginTop: spacing.lg,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(0,0,0,0.38)',
+    textShadowRadius: 5,
   },
   subtitle: {
     color: colors.mutedText,
@@ -68,6 +84,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: spacing.lg,
   },
   primaryText: {
     color: colors.text,
@@ -83,6 +100,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: spacing.lg,
   },
   secondaryText: {
     color: colors.mutedText,

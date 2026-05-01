@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import { Animated, Easing, StyleSheet, View } from "react-native";
+import { Animated, Easing, Image, StyleSheet, View } from "react-native";
 import { colors } from "../constants/theme";
-import { ChessPiece } from "./ChessPiece";
 
 export function LoadingSpinner() {
   const rotate = useRef(new Animated.Value(0)).current;
@@ -54,8 +53,8 @@ export function LoadingSpinner() {
 
   return (
     <View style={styles.wrap}>
-      <Animated.View style={[styles.ring, spinStyle]}>
-        <ChessPiece piece={{ color: "w", type: "n" }} size={54} />
+      <Animated.View style={spinStyle}>
+        <Image source={require("../assets/images/loader-Photoroom.png")} style={styles.loaderImage} resizeMode="contain" />
       </Animated.View>
     </View>
   );
@@ -63,19 +62,18 @@ export function LoadingSpinner() {
 
 const styles = StyleSheet.create({
   wrap: {
-    width: 96,
-    height: 96,
+    width: 250,
+    height: 250,
     alignItems: "center",
     justifyContent: "center",
   },
-  ring: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-    borderWidth: 3,
-    borderColor: colors.accent,
-    borderTopColor: colors.boardLight,
-    alignItems: "center",
-    justifyContent: "center",
+  loaderImage: {
+    width: 220,
+    height: 220,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.36,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
   },
 });
