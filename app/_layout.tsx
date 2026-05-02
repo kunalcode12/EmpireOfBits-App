@@ -7,7 +7,7 @@ import { AuthProvider } from '../store/AuthContext';
 import { GameProvider } from '../store/GameContext';
 
 export const unstable_settings = {
-  anchor: 'index',
+  anchor: '(tabs)',
 };
 
 export default function RootLayout() {
@@ -15,8 +15,10 @@ export default function RootLayout() {
     <ThemeProvider value={DarkTheme}>
       <AuthProvider>
         <GameProvider>
-          <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+          <Stack initialRouteName="(tabs)" screenOptions={{ headerShown: false, animation: 'fade' }}>
             <Stack.Screen name="index" />
+            <Stack.Screen name="auth-flow" />
+            <Stack.Screen name="(tabs)" />
           </Stack>
           <StatusBar style="light" />
         </GameProvider>

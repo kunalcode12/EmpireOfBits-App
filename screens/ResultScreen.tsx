@@ -4,6 +4,38 @@ import { colors, radii, spacing, typography } from '../constants/theme';
 import { formatClock } from '../hooks/useTimer';
 import { useGame } from '../store/GameContext';
 
+const RUNE_MAP: Record<string, string> = {
+  E: 'ᛖ', M: 'ᛗ', P: 'ᛈ', I: 'ᛁ', R: 'ᚱ',
+  O: 'ᛟ', F: 'ᚠ', B: 'ᛒ', T: 'ᛏ', S: 'ᛊ',
+  ' ': '  ',
+};
+
+const EMPIRE_RUNES = 'EMPIRE OF BITS'
+  .split('')
+  .map((c) => RUNE_MAP[c] ?? c)
+  .join('');
+
+const RUNE_LINE = `${EMPIRE_RUNES}   ᛉ   ${EMPIRE_RUNES}   ✦   ${EMPIRE_RUNES}   ᚷ   `;
+
+const ROW_CONFIGS = [
+  { opacity: 0.13, size: 20, offset: 0 },
+  { opacity: 0.09, size: 17, offset: -44 },
+  { opacity: 0.15, size: 23, offset: 18 },
+  { opacity: 0.10, size: 18, offset: -22 },
+  { opacity: 0.12, size: 21, offset: 36 },
+  { opacity: 0.08, size: 16, offset: -10 },
+  { opacity: 0.14, size: 22, offset: 8 },
+  { opacity: 0.09, size: 19, offset: -38 },
+  { opacity: 0.13, size: 20, offset: 26 },
+  { opacity: 0.10, size: 17, offset: -16 },
+  { opacity: 0.15, size: 24, offset: 42 },
+  { opacity: 0.08, size: 18, offset: -6 },
+  { opacity: 0.12, size: 21, offset: 14 },
+  { opacity: 0.09, size: 16, offset: -30 },
+  { opacity: 0.14, size: 20, offset: 22 },
+  { opacity: 0.10, size: 23, offset: -48 },
+];
+
 export function ResultScreen() {
   const game = useGame();
   const result = game.result;
@@ -11,6 +43,7 @@ export function ResultScreen() {
 
   return (
     <View style={styles.screen}>
+      <RunicBackground />
       <Text style={styles.headline}>{headline}</Text>
       <Text style={styles.reason}>{result?.reason ?? 'Game finished'}</Text>
       {result?.message ? <Text style={styles.message}>{result.message}</Text> : null}
@@ -28,6 +61,23 @@ export function ResultScreen() {
   );
 }
 
+function RunicBackground() {
+  return (
+    <View pointerEvents="none" style={runeStyles.container}>
+      {ROW_CONFIGS.map((cfg, i) => (
+        <View key={i} style={[runeStyles.row, { marginLeft: cfg.offset }]}>
+          <Text
+            style={[runeStyles.runeText, { opacity: cfg.opacity, fontSize: cfg.size }]}
+            numberOfLines={1}
+          >
+            {RUNE_LINE}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.stat}>
@@ -36,6 +86,26 @@ function Stat({ label, value }: { label: string; value: string }) {
     </View>
   );
 }
+
+const runeStyles = StyleSheet.create({
+  container: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+    justifyContent: 'space-around',
+    paddingVertical: 4,
+  },
+  row: {
+    overflow: 'hidden',
+  },
+  runeText: {
+    color: '#d4900a',
+    fontWeight: '300',
+    letterSpacing: 5,
+    textShadowColor: '#b86c04',
+    textShadowRadius: 8,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+});
 
 const styles = StyleSheet.create({
   screen: {

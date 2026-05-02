@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Animated, Easing, ImageBackground, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Animated, Easing, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ChessBoard } from '../components/ChessBoard';
 import { ChessPiece } from '../components/ChessPiece';
@@ -12,6 +12,53 @@ import { useGame } from '../store/GameContext';
 import { applyMoveToBoard, boardToFenPlacement, isKingInCheck, oppositeColor, parseFen, squareToCoords, type ChessMove, type Color, type PromotionPiece } from '../utils/chessHelpers';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const RUNE_MAP: Record<string, string> = {
+  E: 'ᛖ', M: 'ᛗ', P: 'ᛈ', I: 'ᛁ', R: 'ᚱ',
+  O: 'ᛟ', F: 'ᚠ', B: 'ᛒ', T: 'ᛏ', S: 'ᛊ',
+  ' ': '  ',
+};
+
+const EMPIRE_RUNES = 'EMPIRE OF BITS'
+  .split('')
+  .map((c) => RUNE_MAP[c] ?? c)
+  .join('');
+
+const RUNE_LINE = `${EMPIRE_RUNES}   ᛉ   ${EMPIRE_RUNES}   ✦   ${EMPIRE_RUNES}   ᚷ   `;
+const ROW_CONFIGS = [
+  { opacity: 0.2, size: 20, offset: 0 },
+  { opacity: 0.14, size: 17, offset: -44 },
+  { opacity: 0.22, size: 23, offset: 18 },
+  { opacity: 0.15, size: 18, offset: -22 },
+  { opacity: 0.18, size: 21, offset: 36 },
+  { opacity: 0.13, size: 16, offset: -10 },
+  { opacity: 0.21, size: 22, offset: 8 },
+  { opacity: 0.14, size: 19, offset: -38 },
+  { opacity: 0.2, size: 20, offset: 26 },
+  { opacity: 0.15, size: 17, offset: -16 },
+  { opacity: 0.22, size: 24, offset: 42 },
+  { opacity: 0.13, size: 18, offset: -6 },
+  { opacity: 0.18, size: 21, offset: 14 },
+  { opacity: 0.14, size: 16, offset: -30 },
+  { opacity: 0.21, size: 20, offset: 22 },
+  { opacity: 0.15, size: 23, offset: -48 },
+];
+
+function RunicBackground() {
+  return (
+    <View pointerEvents="none" style={runeStyles.container}>
+      {ROW_CONFIGS.map((cfg, i) => (
+        <View key={i} style={[runeStyles.row, { marginLeft: cfg.offset }]}>
+          <Text
+            style={[runeStyles.runeText, { opacity: cfg.opacity, fontSize: cfg.size }]}
+            numberOfLines={1}
+          >
+            {RUNE_LINE}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export function GameScreen() {
   const auth = useAuth();
@@ -139,23 +186,8 @@ export function GameScreen() {
   }, [game.checkAlertToken, game.checkAlert, game.clearCheckAlert, checkOpacity, checkTranslateY]);
 
   return (
-    <ImageBackground source={require('../assets/images/backimg.png')} style={styles.screen} resizeMode="cover">
-      <View pointerEvents="none" style={styles.tableGlossTop} />
-      <View pointerEvents="none" style={styles.tableGlossMid} />
-      <View pointerEvents="none" style={styles.tableGlossBottom} />
-      <View pointerEvents="none" style={styles.woodGrainA} />
-      <View pointerEvents="none" style={styles.woodGrainB} />
-      <View pointerEvents="none" style={styles.woodGrainC} />
-      <View pointerEvents="none" style={styles.woodGrainD} />
-      <View pointerEvents="none" style={styles.woodGrainE} />
-      <View pointerEvents="none" style={styles.woodGrainF} />
-      <View pointerEvents="none" style={styles.woodPoreA} />
-      <View pointerEvents="none" style={styles.woodPoreB} />
-      <View pointerEvents="none" style={styles.woodPoreC} />
-      <View pointerEvents="none" style={styles.woodVignette} />
-      <View pointerEvents="none" style={styles.tableCrackOne} />
-      <View pointerEvents="none" style={styles.tableCrackTwo} />
-      <View pointerEvents="none" style={styles.tableCrackThree} />
+    <View style={styles.screen}>
+      <RunicBackground />
       {game.checkAlert && (
         <Animated.View
           style={[
@@ -308,7 +340,7 @@ export function GameScreen() {
 
       <PromotionModal visible={Boolean(chess.pendingPromotion)} color={orientation} onPick={chess.choosePromotion} onCancel={chess.cancelPromotion} />
       <DrawOfferModal visible={game.drawOfferIncoming} onAccept={game.acceptDrawOffer} onReject={game.rejectDrawOffer} />
-    </ImageBackground>
+    </View>
   );
 }
 
@@ -366,10 +398,30 @@ function DrawOfferModal({ visible, onAccept, onReject }: { visible: boolean; onA
   );
 }
 
+const runeStyles = StyleSheet.create({
+  container: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+    justifyContent: 'space-around',
+    paddingVertical: 4,
+  },
+  row: {
+    overflow: 'hidden',
+  },
+  runeText: {
+    color: '#efb53a',
+    fontWeight: '300',
+    letterSpacing: 5,
+    textShadowColor: 'rgba(203, 123, 8, 0.95)',
+    textShadowRadius: 10,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+});
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#4a3220',
+    backgroundColor: colors.background,
   },
   tableGlossTop: {
     position: 'absolute',
