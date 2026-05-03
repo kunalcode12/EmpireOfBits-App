@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 const AUTH_COOKIE_KEY = 'eob.auth.cookie';
 const USER_KEY = 'eob.auth.user';
 const ACTIVE_GAME_KEY = 'eob.active.game';
+const PRIVY_SOLANA_ADDRESS_KEY = 'eob.privy.solanaAddress';
 
 export interface StoredUser {
   id: number;
@@ -64,6 +65,20 @@ export const getActiveGameId = async (): Promise<string | null> => {
 
 export const clearActiveGameId = async (): Promise<void> => {
   if (await canUseSecureStore()) await SecureStore.deleteItemAsync(ACTIVE_GAME_KEY);
+};
+
+/** Last embedded Solana address synced from Privy (for app features that need it offline). */
+export const savePrivySolanaAddress = async (address: string): Promise<void> => {
+  if (await canUseSecureStore()) await SecureStore.setItemAsync(PRIVY_SOLANA_ADDRESS_KEY, address);
+};
+
+export const getPrivySolanaAddress = async (): Promise<string | null> => {
+  if (!(await canUseSecureStore())) return null;
+  return SecureStore.getItemAsync(PRIVY_SOLANA_ADDRESS_KEY);
+};
+
+export const clearPrivySolanaAddress = async (): Promise<void> => {
+  if (await canUseSecureStore()) await SecureStore.deleteItemAsync(PRIVY_SOLANA_ADDRESS_KEY);
 };
 
 export const clearSessionStorage = async (): Promise<void> => {

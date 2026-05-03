@@ -1,20 +1,32 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs, useSegments } from 'expo-router';
+import { AuthBoundary } from '@privy-io/expo';
+import { Redirect, Tabs, useSegments } from 'expo-router';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { usePersistPrivySolanaAddress } from '../../hooks/usePersistPrivySolanaAddress';
 
 const ACCENT = '#FFD700';
 const INACTIVE = '#7A7A90';
 const TAB_BG = '#0A0A0F';
 
 export default function TabsLayout() {
+  usePersistPrivySolanaAddress();
   const insets = useSafeAreaInsets();
   const segments = useSegments();
-  const leafRoute = segments[segments.length - 1];
+  const leafRoute = segments[segments.length - 1] as string;
   const hideTabBar = leafRoute === 'game' || leafRoute === 'lobby' || leafRoute === 'matchmaking';
 
   return (
+    <AuthBoundary
+      loading={
+        <View style={styles.privyLoading}>
+          <ActivityIndicator size="large" color={ACCENT} />
+        </View>
+      }
+      unauthenticated={<Redirect href="/privy-auth" />}
+    >
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -61,10 +73,17 @@ export default function TabsLayout() {
       />
 
     </Tabs>
+    </AuthBoundary>
   );
 }
 
 const styles = StyleSheet.create({
+  privyLoading: {
+    flex: 1,
+    backgroundColor: '#05050F',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   tabBar: {
     position: 'absolute',
     left: 12,

@@ -216,7 +216,7 @@ const reducer = (state: GameState, action: GameAction): GameState => {
           drawOfferIncoming: false,
           opponentDisconnected: false,
           result,
-          toast: result.message,
+          toast: result.message ?? null,
         };
       }
       return {

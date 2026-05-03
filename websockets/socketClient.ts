@@ -34,36 +34,38 @@ class SocketClient {
     if (this.socket?.readyState === WebSocket.OPEN) return;
     if (this.connectPromise) return this.connectPromise;
     if (this.socket?.readyState === WebSocket.CONNECTING) {
-      this.connectPromise = new Promise((resolve, reject) => {
+      const pending = new Promise<void>((resolve, reject) => {
         const socket = this.socket;
         if (!socket) {
           reject(new Error('Socket is unavailable during connect'));
           return;
         }
-        socket.addEventListener('open', () => resolve(), { once: true });
+        socket.addEventListener('open', () => resolve(undefined), { once: true });
         socket.addEventListener('error', () => reject(new Error('Socket connection failed')), { once: true });
         socket.addEventListener('close', () => reject(new Error('Socket closed before opening')), { once: true });
       }).finally(() => {
         this.connectPromise = null;
       });
-      return this.connectPromise;
+      this.connectPromise = pending;
+      return pending;
     }
 
     this.setStatus('connecting');
     const cookie = await getAuthCookie();
     const NativeWebSocket = WebSocket as unknown as WebSocketWithHeaders;
     this.socket = new NativeWebSocket(`${wsBaseUrl()}${path}`, undefined, cookie ? { headers: { Cookie: cookie } } : undefined);
-    this.connectPromise = new Promise((resolve, reject) => {
+    const pending = new Promise<void>((resolve, reject) => {
       if (!this.socket) {
         reject(new Error('Socket is not initialized'));
         return;
       }
-      this.socket.addEventListener('open', () => resolve(), { once: true });
+      this.socket.addEventListener('open', () => resolve(undefined), { once: true });
       this.socket.addEventListener('error', () => reject(new Error('Socket connection failed')), { once: true });
       this.socket.addEventListener('close', () => reject(new Error('Socket closed before opening')), { once: true });
     }).finally(() => {
       this.connectPromise = null;
     });
+    this.connectPromise = pending;
 
     this.socket.onopen = () => this.setStatus('open');
     this.socket.onclose = () => {
@@ -81,7 +83,7 @@ class SocketClient {
         );
       }
     };
-    return this.connectPromise;
+    return pending;
   }
 
   send<TPayload extends object>(type: string, payload: TPayload): void {

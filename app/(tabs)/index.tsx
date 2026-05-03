@@ -11,6 +11,8 @@ import {
   View,
 } from 'react-native';
 
+import { PrivyUserBanner } from '../../components/PrivyUserBanner';
+
 const COLORS = {
   background: '#05050F',
   backgroundAlt: '#090915',
@@ -85,6 +87,8 @@ export default function HomeTabScreen() {
           <Text style={styles.badgeText}>LIVE ON SOLANA DEVNET</Text>
         </View>
       </View>
+
+      <PrivyUserBanner />
 
       <Animated.View style={[styles.ctaWrap, { transform: [{ scale: pulse }] }]}>
         <Pressable
