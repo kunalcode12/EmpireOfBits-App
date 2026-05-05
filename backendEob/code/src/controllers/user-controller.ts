@@ -96,6 +96,7 @@ router.post('/register', async (req: Request, res: Response) => {
       username: newUser.name,
       email: newUser.email,
       chessLevel: chessLevel,
+      points: newUser.points,
       isGuest: false,
     });
     return;
@@ -140,6 +141,7 @@ router.get('/profile', authMiddleware, async (req: Request, res: Response) => {
         name: true,
         email: true,
         chessLevel: true,
+        points: true,
         computerGames: {
           orderBy: { createdAt: 'desc' },
         },
@@ -346,6 +348,7 @@ router.get('/profile', authMiddleware, async (req: Request, res: Response) => {
         name: user.name,
         chessLevel: user.chessLevel,
         email: user.email,
+        points: user.points,
       },
       stats,
       totalTimePlayed: totalTimePlayed,
@@ -439,6 +442,7 @@ router.post('/login', async (req: Request, res: Response) => {
       username: user.name,
       email: user.email,
       chessLevel: user.chessLevel,
+      points: user.points,
       isGuest: false,
     });
     return;
@@ -491,6 +495,68 @@ router.post('/logout', authMiddleware, async (req: Request, res: Response) => {
   } catch (error) {
     res.status(500).json({ error: error });
     console.log(error);
+  }
+});
+
+router.get('/points', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    //@ts-ignore
+    const id = req.userId;
+    const user = await pc.user.findUnique({
+      where: { id: Number(id) },
+      select: { id: true, email: true, points: true },
+    });
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+    res.status(200).json({
+      success: true,
+      id: user.id,
+      email: user.email,
+      points: user.points,
+    });
+  } catch (error) {
+    console.error('Get points error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+router.post('/points', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      delta: z.number().int(),
+    });
+    const { delta } = schema.parse(req.body);
+    //@ts-ignore
+    const id = req.userId;
+
+    const updated = await pc.user.update({
+      where: { id: Number(id) },
+      data: { points: { increment: delta } },
+      select: { id: true, email: true, points: true },
+    });
+
+    await redis.del(`user:${id}:profile`);
+
+    res.status(200).json({
+      success: true,
+      id: updated.id,
+      email: updated.email,
+      points: updated.points,
+      delta,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        message: 'Validation error',
+        errors: error.errors,
+        success: false,
+      });
+      return;
+    }
+    console.error('Update points error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
 
