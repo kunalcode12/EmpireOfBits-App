@@ -11,6 +11,15 @@ import { redis } from '../clients/redisClient';
 import { roomManager } from '../Classes/RoomManager';
 import { addGuestGamesToUserProfile } from '../utils/chessUtils';
 import { removePlayerFromQueue } from '../Services/MatchMaking';
+import {
+  Connection,
+  Keypair,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
 
 export enum ChessLevel {
   BEGINNER,
@@ -22,6 +31,67 @@ export enum RoomStatus {
   ACTIVE,
   FINISHED,
 }
+
+const setAuthCookie = (res: Response, userId: number) => {
+  const token = jwt.sign(
+    { id: userId },
+    process.env.SECRET_TOKEN as string,
+    { expiresIn: '8h' }
+  );
+  res.clearCookie('id');
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 6 * 60 * 60 * 1000,
+  });
+};
+
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+const SELL_POINTS_COST = Number(process.env.SELL_POINTS_COST || '100');
+const SELL_SOL_PAYOUT = Number(process.env.SELL_SOL_PAYOUT || '0.001');
+
+const getTreasuryKeypair = (): Keypair => {
+  const raw = process.env.TREASURY_PRIVATE_KEY;
+  if (!raw) {
+    throw new Error('TREASURY_PRIVATE_KEY is not configured');
+  }
+  let secretKey: Uint8Array;
+  try {
+    const parsed = JSON.parse(raw) as number[];
+    secretKey = Uint8Array.from(parsed);
+  } catch {
+    throw new Error(
+      'Invalid TREASURY_PRIVATE_KEY format. Use JSON array format, e.g. [12,34,...]',
+    );
+  }
+  return Keypair.fromSecretKey(secretKey);
+};
+
+const authSuccessResponse = (
+  res: Response,
+  user: {
+    id: number;
+    name: string;
+    email: string;
+    chessLevel: 'BEGINNER' | 'INTERMEDIATE' | 'PRO';
+    points: number;
+  },
+  message: string,
+  isNewUser = false
+) => {
+  res.status(200).json({
+    success: true,
+    message,
+    id: user.id,
+    username: user.name,
+    email: user.email,
+    chessLevel: user.chessLevel,
+    points: user.points,
+    isGuest: false,
+    isNewUser,
+  });
+};
 
 router.post('/register', async (req: Request, res: Response) => {
   try {
@@ -452,6 +522,90 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
+router.post('/register-or-login', async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      email: z.string().email('Invalid Email'),
+      name: z
+        .string()
+        .min(3, 'Minimum UserName should be 3 letter long')
+        .max(20, 'Max Length of Username is 20')
+        .regex(
+          /^[a-zA-Z0-9]+$/,
+          'Name should only contain letters, numbers, and underscores'
+        ),
+      password: z
+        .string()
+        .min(6, 'Password Should be 6 char long')
+        .max(100, 'Password is too long '),
+    });
+    const { email, name, password } = schema.parse(req.body);
+    const guestId = req.cookies.id;
+
+    if (guestId) {
+      await removePlayerFromQueue(guestId, true);
+    }
+
+    const existingUser = await pc.user.findUnique({ where: { email } });
+
+    if (existingUser) {
+      if (!existingUser.password) {
+        res.status(400).json({
+          message:
+            'This account uses social login. Please sign in with social auth.',
+          success: false,
+        });
+        return;
+      }
+
+      const checkedPass = await bcrypt.compare(password, existingUser.password);
+      if (!checkedPass) {
+        res
+          .status(401)
+          .json({ message: 'Invalid email or password', success: false });
+        return;
+      }
+
+      setAuthCookie(res, existingUser.id);
+      authSuccessResponse(res, existingUser, 'Login Successful');
+      return;
+    }
+
+    const hashedPass = await bcrypt.hash(password, 12);
+    const newUser = await pc.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPass,
+        chessLevel: 'BEGINNER',
+      },
+    });
+
+    const guestGamesOfUser = await pc.guestGames.findMany({
+      where: {
+        OR: [{ player1GuestId: guestId }, { player2GuestId: guestId }],
+      },
+    });
+    if (guestGamesOfUser.length > 0 && guestId) {
+      addGuestGamesToUserProfile(guestId, newUser.id);
+    }
+
+    setAuthCookie(res, newUser.id);
+    authSuccessResponse(res, newUser, 'User Created', true);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        message: 'Validation error',
+        errors: error.errors,
+        success: false,
+      });
+      return;
+    }
+    console.error('Register or login error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 router.post(
   '/profile/update',
   authMiddleware,
@@ -556,6 +710,104 @@ router.post('/points', authMiddleware, async (req: Request, res: Response) => {
       return;
     }
     console.error('Update points error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+router.post('/points/sell', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      walletAddress: z.string().min(32),
+    });
+    const { walletAddress } = schema.parse(req.body);
+    //@ts-ignore
+    const id = req.userId;
+
+    let recipient: PublicKey;
+    try {
+      recipient = new PublicKey(walletAddress);
+    } catch {
+      res.status(400).json({ success: false, message: 'Invalid wallet address' });
+      return;
+    }
+
+    const updated = await pc.user.updateMany({
+      where: {
+        id: Number(id),
+        points: { gte: SELL_POINTS_COST },
+      },
+      data: {
+        points: { decrement: SELL_POINTS_COST },
+      },
+    });
+
+    if (updated.count === 0) {
+      res.status(400).json({
+        success: false,
+        message: `Not enough points. Need at least ${SELL_POINTS_COST}`,
+      });
+      return;
+    }
+
+    const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+    const treasury = getTreasuryKeypair();
+    const expectedTreasuryPublic = process.env.TREASURY_PUBLIC_KEY;
+    if (expectedTreasuryPublic && treasury.publicKey.toBase58() !== expectedTreasuryPublic) {
+      throw new Error('TREASURY_PUBLIC_KEY does not match TREASURY_PRIVATE_KEY');
+    }
+
+    const lamports = Math.round(SELL_SOL_PAYOUT * LAMPORTS_PER_SOL);
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    const tx = new Transaction({
+      feePayer: treasury.publicKey,
+      recentBlockhash: blockhash,
+    }).add(
+      SystemProgram.transfer({
+        fromPubkey: treasury.publicKey,
+        toPubkey: recipient,
+        lamports,
+      }),
+    );
+
+    let signature = '';
+    try {
+      signature = await sendAndConfirmTransaction(connection, tx, [treasury], {
+        commitment: 'confirmed',
+      });
+    } catch (payoutError) {
+      await pc.user.update({
+        where: { id: Number(id) },
+        data: { points: { increment: SELL_POINTS_COST } },
+      });
+      await redis.del(`user:${id}:profile`);
+      throw payoutError;
+    }
+
+    const user = await pc.user.findUnique({
+      where: { id: Number(id) },
+      select: { id: true, email: true, points: true },
+    });
+    await redis.del(`user:${id}:profile`);
+
+    res.status(200).json({
+      success: true,
+      id: user?.id,
+      email: user?.email,
+      points: user?.points,
+      pointsSpent: SELL_POINTS_COST,
+      payoutSol: SELL_SOL_PAYOUT,
+      txSignature: signature,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        message: 'Validation error',
+        errors: error.errors,
+        success: false,
+      });
+      return;
+    }
+    console.error('Sell points error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });

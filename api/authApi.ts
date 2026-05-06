@@ -21,6 +21,8 @@ export interface SignUpPayload extends SignInPayload {
 export interface AuthResponse extends StoredUser {
   success: boolean;
   message?: string;
+  isNewUser?: boolean;
+  points: number;
 }
 
 type HeadersWithCookie = Headers & {
@@ -126,6 +128,136 @@ export const signUp = async (payload: SignUpPayload): Promise<StoredUser> => {
     body: JSON.stringify(payload),
   });
   return toStoredUser(response);
+};
+
+export interface RegisterOrLoginPayload {
+  email: string;
+  name: string;
+  password: string;
+}
+
+export interface RegisterOrLoginResult {
+  user: StoredUser;
+  points: number;
+  isNewUser: boolean;
+}
+
+export const registerOrLogin = async (
+  payload: RegisterOrLoginPayload,
+): Promise<RegisterOrLoginResult> => {
+  const response = await request<AuthResponse>(
+    "/api/v1/user/register-or-login",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+  return {
+    user: toStoredUser(response),
+    points: response.points,
+    isNewUser: Boolean(response.isNewUser),
+  };
+};
+
+export interface UserPointsResponse {
+  success: boolean;
+  id: number;
+  email: string;
+  points: number;
+}
+
+export const getUserPoints = async (): Promise<number> => {
+  const response = await request<UserPointsResponse>("/api/v1/user/points", {
+    method: "GET",
+  });
+  return response.points;
+};
+
+export interface UpdateUserPointsResponse extends UserPointsResponse {
+  delta: number;
+}
+
+export const updateUserPoints = async (delta: number): Promise<UpdateUserPointsResponse> => {
+  return request<UpdateUserPointsResponse>("/api/v1/user/points", {
+    method: "POST",
+    body: JSON.stringify({ delta }),
+  });
+};
+
+export interface SellPointsResponse extends UserPointsResponse {
+  pointsSpent: number;
+  payoutSol: number;
+  txSignature: string;
+}
+
+export const sellPoints = async (walletAddress: string): Promise<SellPointsResponse> => {
+  return request<SellPointsResponse>("/api/v1/user/points/sell", {
+    method: "POST",
+    body: JSON.stringify({ walletAddress }),
+  });
+};
+
+export interface UserProfileStatsBucket {
+  total: number;
+  won: number;
+  lost: number;
+  drawn: number;
+}
+
+export interface UserProfileResponse {
+  success: boolean;
+  isGuest: boolean;
+  userProfile: {
+    user: {
+      id: number;
+      name: string;
+      email: string;
+      chessLevel: "BEGINNER" | "INTERMEDIATE" | "PRO";
+      points: number;
+    };
+    stats: {
+      computer: UserProfileStatsBucket;
+      room: UserProfileStatsBucket;
+      guest: UserProfileStatsBucket;
+    };
+    totalTimePlayed: string;
+    recentGames: Record<string, unknown>;
+    allGames: Record<string, unknown>;
+    rooms: Record<string, unknown>;
+  };
+}
+
+export const getUserProfile = async (): Promise<UserProfileResponse["userProfile"]> => {
+  const response = await request<UserProfileResponse>("/api/v1/user/profile", {
+    method: "GET",
+  });
+  return response.userProfile;
+};
+
+export interface ProfileUpdatePayload {
+  name?: string;
+  email?: string;
+  chessLevel?: "BEGINNER" | "INTERMEDIATE" | "PRO";
+  password?: string;
+}
+
+export interface ProfileUpdateResponse {
+  message: string;
+  user: {
+    id: number;
+    name: string;
+    email: string;
+    chessLevel: "BEGINNER" | "INTERMEDIATE" | "PRO";
+  };
+}
+
+export const updateUserProfile = async (
+  payload: ProfileUpdatePayload,
+): Promise<ProfileUpdateResponse> => {
+  return request<ProfileUpdateResponse>("/api/v1/user/profile/update", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 };
 
 export const checkAuth = async (): Promise<boolean> => {

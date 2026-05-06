@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { router } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing, typography } from '../constants/theme';
@@ -81,8 +82,9 @@ export function LobbyScreen() {
               <Text style={styles.eyebrow}>Signed in as</Text>
               <Text style={styles.title}>{auth.user?.username ?? 'Player'}</Text>
             </View>
-            <Pressable style={styles.logout} onPress={auth.logout}>
-              <Text style={styles.logoutText}>Logout</Text>
+            <Pressable style={styles.backButton} onPress={() => router.back()}>
+              <MaterialCommunityIcons name="arrow-left" size={16} color={colors.mutedText} />
+              <Text style={styles.backButtonText}>Back</Text>
             </Pressable>
           </View>
           <View style={styles.section}>
@@ -252,15 +254,18 @@ const styles = StyleSheet.create({
     fontSize: typography.title,
     fontWeight: '900',
   },
-  logout: {
+  backButton: {
     borderRadius: radii.sm,
     borderWidth: 1,
     borderColor: colors.border,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
-  logoutText: {
+  backButtonText: {
     color: colors.mutedText,
     fontWeight: '800',
   },

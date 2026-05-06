@@ -1,4 +1,5 @@
 import React from 'react';
+import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { formatClock } from '../hooks/useTimer';
@@ -40,6 +41,10 @@ export function ResultScreen() {
   const game = useGame();
   const result = game.result;
   const headline = result?.result === 'win' ? 'You Won!' : result?.result === 'lose' ? 'You Lost' : 'Draw';
+  const handleHomePress = async () => {
+    await Promise.resolve(game.resetGame());
+    router.push('/(tabs)/play');
+  };
 
   return (
     <View style={styles.screen}>
@@ -54,7 +59,7 @@ export function ResultScreen() {
       <Pressable style={styles.primary} onPress={game.resetGame}>
         <Text style={styles.primaryText}>Play Again</Text>
       </Pressable>
-      <Pressable style={styles.secondary} onPress={game.resetGame}>
+      <Pressable style={styles.secondary} onPress={() => void handleHomePress()}>
         <Text style={styles.secondaryText}>Home</Text>
       </Pressable>
     </View>

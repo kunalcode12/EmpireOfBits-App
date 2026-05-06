@@ -1,7 +1,11 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useEmbeddedSolanaWallet, usePrivy } from '@privy-io/expo';
 import * as Font from 'expo-font';
-import React, { useEffect, useRef, useState } from 'react';
+import { router } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
+  ActivityIndicator,
   Animated,
   Dimensions,
   Easing,
@@ -16,6 +20,12 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { getUserPoints, registerOrLogin, sellPoints, updateUserPoints } from '../api/authApi';
+import { SOLANA_RPC_URL } from '../constants/solana';
+import { useAuth } from '../store/AuthContext';
+import { getPrivyEmail } from '../utils/privyUser';
+import { saveStoredUser } from '../utils/storageHelper';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -41,6 +51,10 @@ const NEON_RED = '#ef4444';
 const CRT_TINT = 'rgba(255, 255, 255, 0.04)';
 const VIGNETTE = 'rgba(0, 0, 0, 0.25)';
 const MAGENTA_DEEP = '#c026d3';
+const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
+const TRADE_POINTS = 100;
+const TRADE_SOL = 0.001;
+const CHESS_ENTRY_COST = 50;
 
 // ─── Background: dark CRT + grid + glitch rune rows (matches PrivyAuthScreen) ─
 
@@ -720,6 +734,10 @@ function ReactivePanel({
 
 export function ArcadeCenterScreen() {
   const insets = useSafeAreaInsets();
+  const auth = useAuth();
+  const { user: privyUser, isReady: privyReady } = usePrivy();
+  const solanaWallet = useEmbeddedSolanaWallet();
+  const connectionRef = useRef(new Connection(SOLANA_RPC_URL, 'confirmed'));
 
   const [pixelLoaded, setPixelLoaded] = useState(false);
   useEffect(() => {
@@ -734,6 +752,73 @@ export function ArcadeCenterScreen() {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [twitch, setTwitch] = useState('');
+  const [points, setPoints] = useState<number | null>(null);
+  const [pointsLoading, setPointsLoading] = useState(false);
+  const [chessLoading, setChessLoading] = useState(false);
+  const [chessEntryModalOpen, setChessEntryModalOpen] = useState(false);
+  const [chessEntryCharging, setChessEntryCharging] = useState(false);
+  const [tradeBusy, setTradeBusy] = useState(false);
+  const [tradeStatusText, setTradeStatusText] = useState<string | null>(null);
+  const [tradeDrawerOpen, setTradeDrawerOpen] = useState(false);
+  const [tradeMode, setTradeMode] = useState<'BUY' | 'SELL'>('BUY');
+  const tradeDrawerX = useRef(new Animated.Value(SCREEN_WIDTH)).current;
+  const isSyncingChessAuthRef = useRef(false);
+
+  const fetchPoints = async () => {
+    console.log('fetchPoints', auth.user);
+    if (!auth.user) {
+      setPoints(null);
+      return;
+    }
+    setPointsLoading(true);
+    try {
+      const userPoints = await getUserPoints();
+      setPoints(userPoints);
+    } catch (error) {
+      console.log('Points fetch failed:', error);
+    } finally {
+      setPointsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchPoints();
+  }, [auth.user?.id]);
+
+  const ensureChessAuth = useCallback(async () => {
+    if (auth.user || !privyReady || !privyUser || isSyncingChessAuthRef.current) {
+      return Boolean(auth.user);
+    }
+
+    const emailFromPrivy = getPrivyEmail(privyUser);
+    if (!emailFromPrivy) return false;
+
+    isSyncingChessAuthRef.current = true;
+    try {
+      const localPart = emailFromPrivy.split('@')[0] || 'Player';
+      const cleanedName = localPart.replace(/[^a-zA-Z0-9]/g, '');
+      const baseName = cleanedName.length >= 3 ? cleanedName : 'Player';
+      const name = baseName.slice(0, 20);
+
+      const result = await registerOrLogin({
+        email: emailFromPrivy,
+        name,
+        password: 'test1234@',
+      });
+      await saveStoredUser(result.user);
+      await auth.login({ email: emailFromPrivy, password: 'test1234@' });
+      return true;
+    } catch (error) {
+      console.log('Chess auth sync failed:', error);
+      return false;
+    } finally {
+      isSyncingChessAuthRef.current = false;
+    }
+  }, [auth, privyReady, privyUser]);
+
+  useEffect(() => {
+    void ensureChessAuth();
+  }, [ensureChessAuth]);
 
   const handleToggle = (next: boolean) => {
     setReactiveOn(next);
@@ -750,6 +835,182 @@ export function ArcadeCenterScreen() {
     setReactiveOn(false);
   };
 
+  const openTradeDrawer = (mode: 'BUY' | 'SELL') => {
+    setTradeMode(mode);
+    setTradeStatusText(null);
+    setTradeDrawerOpen(true);
+    Animated.spring(tradeDrawerX, {
+      toValue: 0,
+      tension: 70,
+      friction: 12,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const closeTradeDrawer = () => {
+    if (tradeBusy) return;
+    Animated.timing(tradeDrawerX, {
+      toValue: SCREEN_WIDTH,
+      duration: 220,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setTradeDrawerOpen(false);
+    });
+  };
+
+  const applyPointsDelta = useCallback(async (delta: number) => {
+    const response = await updateUserPoints(delta);
+    setPoints(response.points);
+    return response.points;
+  }, []);
+
+  const handleBuyPoints = useCallback(async () => {
+    if (tradeBusy) return;
+    const walletAddress =
+      solanaWallet.status === 'connected' && solanaWallet.wallets?.[0]
+        ? solanaWallet.wallets[0].address
+        : null;
+    if (!walletAddress || !solanaWallet.wallets?.[0]) {
+      Alert.alert('Buy points', 'Connect your embedded Privy Solana wallet first.');
+      return;
+    }
+    if (!auth.user) {
+      Alert.alert('Buy points', 'Please wait until your chess account is ready.');
+      return;
+    }
+
+    setTradeBusy(true);
+    setTradeStatusText('Awaiting Privy wallet approval...');
+    try {
+      const fromPubkey = new PublicKey(walletAddress);
+      const toPubkey = new PublicKey(TREASURY_WALLET);
+      const lamports = Math.round(TRADE_SOL * LAMPORTS_PER_SOL);
+      const { blockhash } = await connectionRef.current.getLatestBlockhash('confirmed');
+      const tx = new Transaction({
+        recentBlockhash: blockhash,
+        feePayer: fromPubkey,
+      }).add(
+        SystemProgram.transfer({
+          fromPubkey,
+          toPubkey,
+          lamports,
+        }),
+      );
+
+      const provider = await solanaWallet.wallets[0].getProvider();
+      const txResult = (await provider.request({
+        method: 'signAndSendTransaction',
+        params: {
+          transaction: tx,
+          connection: connectionRef.current,
+        },
+      })) as { signature?: string };
+
+      setTradeStatusText('Transaction confirmed. Updating points...');
+      const updatedPoints = await applyPointsDelta(TRADE_POINTS);
+      Alert.alert(
+        'Buy successful',
+        `Sent ${TRADE_SOL} SOL.\n+${TRADE_POINTS} points.\nBalance: ${updatedPoints}${
+          txResult.signature ? `\nTx: ${txResult.signature.slice(0, 20)}...` : ''
+        }`,
+      );
+    } catch (error) {
+      Alert.alert('Buy failed', error instanceof Error ? error.message : 'Unable to complete purchase.');
+    } finally {
+      setTradeBusy(false);
+      setTradeStatusText(null);
+    }
+  }, [applyPointsDelta, auth.user, solanaWallet, tradeBusy]);
+
+  const handleSellPoints = useCallback(async () => {
+    if (tradeBusy) return;
+    const walletAddress =
+      solanaWallet.status === 'connected' && solanaWallet.wallets?.[0]
+        ? solanaWallet.wallets[0].address
+        : null;
+    if (!walletAddress || !solanaWallet.wallets?.[0]) {
+      Alert.alert('Sell points', 'Connect your embedded Privy Solana wallet first.');
+      return;
+    }
+    if (!auth.user) {
+      Alert.alert('Sell points', 'Please wait until your chess account is ready.');
+      return;
+    }
+    if ((points ?? 0) < TRADE_POINTS) {
+      Alert.alert('Sell points', `You need at least ${TRADE_POINTS} points to sell.`);
+      return;
+    }
+
+    setTradeBusy(true);
+    setTradeStatusText('Awaiting Privy wallet signature...');
+    try {
+      const provider = await solanaWallet.wallets[0].getProvider();
+      await provider.request({
+        method: 'signMessage',
+        params: {
+          message: `Sell confirmation: redeem ${TRADE_POINTS} points for ${TRADE_SOL} SOL on devnet`,
+        },
+      });
+
+      setTradeStatusText('Signature complete. Processing treasury payout...');
+      const sellResponse = await sellPoints(walletAddress);
+      const updatedPoints = sellResponse.points;
+      setPoints(updatedPoints);
+      Alert.alert(
+        'Sell successful',
+        `${sellResponse.payoutSol} SOL sent from treasury.\n-${sellResponse.pointsSpent} points.\nBalance: ${updatedPoints}\nTx: ${sellResponse.txSignature.slice(0, 20)}...`,
+      );
+    } catch (error) {
+      Alert.alert('Sell failed', error instanceof Error ? error.message : 'Unable to complete sell flow.');
+    } finally {
+      setTradeBusy(false);
+      setTradeStatusText(null);
+    }
+  }, [applyPointsDelta, auth.user, points, solanaWallet, tradeBusy]);
+
+  const handleChessPress = async () => {
+    if (!privyReady || !privyUser || chessLoading) return;
+
+    setChessLoading(true);
+    try {
+      const isLinked = await ensureChessAuth();
+      if (!auth.user && !isLinked) return;
+
+      setChessEntryModalOpen(true);
+    } catch (error) {
+      console.log('Chess auth flow failed:', error);
+    } finally {
+      setChessLoading(false);
+    }
+  };
+
+  const handleChessEntryConfirm = useCallback(async () => {
+    if (chessEntryCharging || chessLoading) return;
+    if ((points ?? 0) < CHESS_ENTRY_COST) {
+      Alert.alert(
+        'Not enough points',
+        `You need ${CHESS_ENTRY_COST} points to start a Chess match.`,
+      );
+      return;
+    }
+
+    setChessEntryCharging(true);
+    try {
+      const updatedPoints = await applyPointsDelta(-CHESS_ENTRY_COST);
+      setChessEntryModalOpen(false);
+      router.push('/auth-flow');
+      Alert.alert('Match started', `Entry fee charged: ${CHESS_ENTRY_COST} points.\nBalance: ${updatedPoints}`);
+    } catch (error) {
+      Alert.alert(
+        'Unable to start match',
+        error instanceof Error ? error.message : 'Point deduction failed.',
+      );
+    } finally {
+      setChessEntryCharging(false);
+    }
+  }, [applyPointsDelta, chessEntryCharging, chessLoading, points]);
+
   return (
     <View style={styles.root}>
       <ArcadeBackground />
@@ -761,6 +1022,32 @@ export function ArcadeCenterScreen() {
         showsVerticalScrollIndicator={false}
       >
         <ArcadeHeader pixelLoaded={pixelLoaded} />
+        <View style={styles.utilityRow}>
+          <View style={styles.pointsCard}>
+            <Text style={styles.pointsLabel}>POINTS</Text>
+            {pointsLoading ? (
+              <ActivityIndicator size="small" color={NEON_YELLOW} />
+            ) : (
+              <Text style={pixelLoaded ? styles.pointsValuePixel : styles.pointsValueFallback}>
+                {points ?? '--'}
+              </Text>
+            )}
+          </View>
+          <View style={styles.utilityButtons}>
+            <Pressable style={styles.utilityBtn} onPress={() => void fetchPoints()}>
+              <MaterialCommunityIcons name="refresh" size={16} color={ELECTRIC_CYAN} />
+              <Text style={styles.utilityBtnText}>REFRESH</Text>
+            </Pressable>
+            <Pressable style={styles.utilityBtn} onPress={() => openTradeDrawer('BUY')}>
+              <MaterialCommunityIcons name="cart-outline" size={16} color={NEON_YELLOW} />
+              <Text style={styles.utilityBtnText}>BUY</Text>
+            </Pressable>
+            <Pressable style={styles.utilityBtn} onPress={() => openTradeDrawer('SELL')}>
+              <MaterialCommunityIcons name="cash-minus" size={16} color={HOT_PINK} />
+              <Text style={styles.utilityBtnText}>SELL</Text>
+            </Pressable>
+          </View>
+        </View>
 
         <ReactiveToggleRow
           value={reactiveOn}
@@ -776,11 +1063,12 @@ export function ArcadeCenterScreen() {
         <View style={styles.grid}>
           <GameCard
             title="CHESS"
-            subtitle="STRATEGY · LIVE"
+            subtitle={`STRATEGY · LIVE · ${CHESS_ENTRY_COST} PTS`}
             borderColor={GOLD}
             glowColor={GOLD}
             illustration={<ChessIllustration />}
             pixelLoaded={pixelLoaded}
+            onPress={() => void handleChessPress()}
           />
           <GameCard
             title="TIC TAC TOE"
@@ -833,6 +1121,140 @@ export function ArcadeCenterScreen() {
         setTwitch={setTwitch}
         pixelLoaded={pixelLoaded}
       />
+
+      {(tradeDrawerOpen || chessLoading || chessEntryModalOpen) && (
+        <View style={styles.overlayBlocker} pointerEvents="box-none">
+          {tradeDrawerOpen && (
+            <>
+              <Pressable style={styles.drawerBackdrop} onPress={closeTradeDrawer} />
+              <Animated.View
+                style={[
+                  styles.tradeDrawer,
+                  {
+                    transform: [{ translateX: tradeDrawerX }],
+                    paddingTop: insets.top + 12,
+                    paddingBottom: insets.bottom + 18,
+                  },
+                ]}
+              >
+                <View style={styles.drawerHeader}>
+                  <Pressable onPress={closeTradeDrawer} style={styles.drawerBackBtn}>
+                    <MaterialCommunityIcons name="arrow-left" size={18} color={ELECTRIC_CYAN} />
+                    <Text style={styles.drawerBackText}>BACK</Text>
+                  </Pressable>
+                  <Text style={pixelLoaded ? styles.drawerTitlePixel : styles.drawerTitleFallback}>
+                    {tradeMode} PANEL
+                  </Text>
+                  <View style={styles.drawerBackBtn} />
+                </View>
+                <View style={styles.drawerBody}>
+                  <MaterialCommunityIcons
+                    name={tradeMode === 'BUY' ? 'cart-plus' : 'cash-minus'}
+                    size={54}
+                    color={tradeMode === 'BUY' ? NEON_YELLOW : HOT_PINK}
+                  />
+                  <Text style={styles.drawerBodyTitle}>
+                    {tradeMode === 'BUY' ? `BUY ${TRADE_POINTS} POINTS` : `SELL ${TRADE_POINTS} POINTS`}
+                  </Text>
+                  <Text style={styles.drawerBodyHint}>
+                    {tradeMode === 'BUY'
+                      ? `${TRADE_SOL} SOL -> ${TRADE_POINTS} points (Privy sign + send)`
+                      : `${TRADE_POINTS} points -> ${TRADE_SOL} SOL (devnet airdrop demo)`}
+                  </Text>
+                  <View style={styles.drawerStatBox}>
+                    <Text style={styles.drawerStatLabel}>CURRENT POINTS</Text>
+                    {pointsLoading ? (
+                      <ActivityIndicator size="small" color={NEON_YELLOW} />
+                    ) : (
+                      <Text style={styles.drawerStatValue}>{points ?? '--'}</Text>
+                    )}
+                  </View>
+                  {tradeStatusText ? (
+                    <View style={styles.drawerStatusRow}>
+                      <ActivityIndicator size="small" color={ELECTRIC_CYAN} />
+                      <Text style={styles.drawerStatusText}>{tradeStatusText}</Text>
+                    </View>
+                  ) : null}
+                  <Pressable
+                    style={[
+                      styles.drawerActionBtn,
+                      tradeMode === 'BUY' ? styles.drawerActionBtnBuy : styles.drawerActionBtnSell,
+                      tradeBusy && styles.utilityBtnDisabled,
+                    ]}
+                    disabled={tradeBusy}
+                    onPress={() => void (tradeMode === 'BUY' ? handleBuyPoints() : handleSellPoints())}
+                  >
+                    <MaterialCommunityIcons
+                      name={tradeMode === 'BUY' ? 'wallet-plus-outline' : 'cash-refund'}
+                      size={18}
+                      color={tradeMode === 'BUY' ? NEON_YELLOW : HOT_PINK}
+                    />
+                    <Text
+                      style={[
+                        styles.drawerActionBtnText,
+                        { color: tradeMode === 'BUY' ? NEON_YELLOW : HOT_PINK },
+                      ]}
+                    >
+                      {tradeBusy
+                        ? 'PROCESSING...'
+                        : tradeMode === 'BUY'
+                          ? `PAY ${TRADE_SOL} SOL`
+                          : `REDEEM ${TRADE_POINTS} PTS`}
+                    </Text>
+                  </Pressable>
+                  <Text style={styles.drawerBodyHint}>
+                    {tradeMode === 'BUY'
+                      ? `Destination wallet: ${TREASURY_WALLET.slice(0, 8)}...${TREASURY_WALLET.slice(-8)}`
+                      : 'Sell uses devnet airdrop for demo mode.'}
+                  </Text>
+                </View>
+              </Animated.View>
+            </>
+          )}
+          {chessLoading && (
+            <View style={styles.chessLoaderOverlay}>
+              <View style={styles.chessLoaderCard}>
+                <ActivityIndicator size="large" color={NEON_YELLOW} />
+                <Text style={styles.chessLoaderTitle}>PREPARING CHESS ARENA...</Text>
+              </View>
+            </View>
+          )}
+          {chessEntryModalOpen && (
+            <View style={styles.chessLoaderOverlay}>
+              <View style={styles.chessEntryModalCard}>
+                <MaterialCommunityIcons name="chess-king" size={42} color={NEON_YELLOW} />
+                <Text style={styles.chessEntryTitle}>START CHESS MATCH?</Text>
+                <Text style={styles.chessEntryHint}>
+                  This match costs {CHESS_ENTRY_COST} points.
+                </Text>
+                <Text style={styles.chessEntryBalance}>
+                  Current balance: {pointsLoading ? '...' : points ?? '--'} points
+                </Text>
+                <View style={styles.chessEntryButtons}>
+                  <Pressable
+                    style={[styles.chessEntryBtn, styles.chessEntryCancelBtn]}
+                    onPress={() => setChessEntryModalOpen(false)}
+                    disabled={chessEntryCharging}
+                  >
+                    <Text style={styles.chessEntryCancelText}>CANCEL</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.chessEntryBtn, styles.chessEntryPlayBtn, chessEntryCharging && styles.utilityBtnDisabled]}
+                    onPress={() => void handleChessEntryConfirm()}
+                    disabled={chessEntryCharging}
+                  >
+                    {chessEntryCharging ? (
+                      <ActivityIndicator size="small" color={NEON_YELLOW} />
+                    ) : (
+                      <Text style={styles.chessEntryPlayText}>PLAY ({CHESS_ENTRY_COST})</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -1485,5 +1907,294 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
     rowGap: 12,
+  },
+  utilityRow: {
+    marginBottom: 14,
+    gap: 10,
+  },
+  pointsCard: {
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,230,0,0.35)',
+    borderRadius: 8,
+    backgroundColor: 'rgba(8,8,8,0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+    gap: 4,
+  },
+  pointsLabel: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM,
+    fontSize: 11,
+    letterSpacing: 2,
+  },
+  pointsValuePixel: {
+    fontFamily: PIXEL_FONT,
+    color: NEON_YELLOW,
+    fontSize: 20,
+    letterSpacing: 1.5,
+    textShadowColor: 'rgba(255,230,0,0.4)',
+    textShadowRadius: 10,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  pointsValueFallback: {
+    fontWeight: '900',
+    color: NEON_YELLOW,
+    fontSize: 24,
+    letterSpacing: 3,
+  },
+  utilityButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  utilityBtn: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(12,12,12,0.88)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  utilityBtnText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: INK,
+    fontSize: 10,
+    letterSpacing: 1,
+    fontWeight: '700',
+  },
+  overlayBlocker: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  drawerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  tradeDrawer: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: Math.min(SCREEN_WIDTH * 0.82, 360),
+    backgroundColor: 'rgba(7,7,7,0.98)',
+    borderLeftWidth: 1.5,
+    borderLeftColor: 'rgba(0,245,255,0.25)',
+    paddingHorizontal: 14,
+  },
+  drawerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  drawerBackBtn: {
+    minWidth: 70,
+    minHeight: 34,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.35)',
+    backgroundColor: 'rgba(0,245,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  drawerBackText: {
+    color: ELECTRIC_CYAN,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 10,
+    letterSpacing: 1,
+  },
+  drawerTitlePixel: {
+    fontFamily: PIXEL_FONT,
+    fontSize: 11,
+    color: NEON_YELLOW,
+    letterSpacing: 1.4,
+  },
+  drawerTitleFallback: {
+    fontWeight: '900',
+    fontSize: 14,
+    color: NEON_YELLOW,
+    letterSpacing: 2.4,
+  },
+  drawerBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 10,
+    backgroundColor: 'rgba(12,12,12,0.8)',
+    paddingHorizontal: 18,
+  },
+  drawerBodyTitle: {
+    color: INK,
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  drawerBodyHint: {
+    color: DIM,
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  utilityBtnDisabled: {
+    opacity: 0.45,
+  },
+  drawerStatBox: {
+    width: '100%',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(5,5,5,0.75)',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 4,
+    marginTop: 2,
+  },
+  drawerStatLabel: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 10,
+    color: DIM,
+    letterSpacing: 1.4,
+  },
+  drawerStatValue: {
+    color: NEON_YELLOW,
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  drawerStatusRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  drawerStatusText: {
+    color: ELECTRIC_CYAN,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 11,
+    letterSpacing: 0.4,
+  },
+  drawerActionBtn: {
+    width: '100%',
+    borderRadius: 8,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(12,12,12,0.95)',
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  drawerActionBtnBuy: {
+    borderColor: 'rgba(255,230,0,0.42)',
+  },
+  drawerActionBtnSell: {
+    borderColor: 'rgba(255,0,110,0.45)',
+  },
+  drawerActionBtnText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 12,
+    letterSpacing: 1,
+    fontWeight: '800',
+  },
+  chessLoaderOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  chessLoaderCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,230,0,0.3)',
+    backgroundColor: 'rgba(10,10,10,0.95)',
+    paddingVertical: 24,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    gap: 10,
+  },
+  chessLoaderTitle: {
+    fontFamily: PIXEL_FONT,
+    color: NEON_YELLOW,
+    fontSize: 10,
+    letterSpacing: 1.4,
+    textAlign: 'center',
+  },
+  chessEntryModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,230,0,0.35)',
+    backgroundColor: 'rgba(8,8,8,0.97)',
+    paddingVertical: 22,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 10,
+  },
+  chessEntryTitle: {
+    fontFamily: PIXEL_FONT,
+    color: NEON_YELLOW,
+    fontSize: 11,
+    letterSpacing: 1.2,
+    textAlign: 'center',
+  },
+  chessEntryHint: {
+    color: INK,
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  chessEntryBalance: {
+    color: DIM,
+    fontSize: 12,
+    textAlign: 'center',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  chessEntryButtons: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  chessEntryBtn: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chessEntryCancelBtn: {
+    borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  chessEntryPlayBtn: {
+    borderColor: 'rgba(255,230,0,0.38)',
+    backgroundColor: 'rgba(255,230,0,0.08)',
+  },
+  chessEntryCancelText: {
+    color: INK,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  chessEntryPlayText: {
+    color: NEON_YELLOW,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
 });
