@@ -1,15 +1,17 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEmbeddedSolanaWallet, usePrivy } from '@privy-io/expo';
+import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import * as Font from 'expo-font';
 import { router } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Easing,
   KeyboardAvoidingView,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -20,7 +22,6 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import { getUserPoints, registerOrLogin, sellPoints, updateUserPoints } from '../api/authApi';
 import { SOLANA_RPC_URL } from '../constants/solana';
 import { useAuth } from '../store/AuthContext';
@@ -55,6 +56,8 @@ const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
 const TRADE_POINTS = 100;
 const TRADE_SOL = 0.001;
 const CHESS_ENTRY_COST = 50;
+const SWIPE_KNOB_SIZE = 48;
+const SWIPE_MAX_DISTANCE = SCREEN_WIDTH * 0.62;
 
 // ─── Background: dark CRT + grid + glitch rune rows (matches PrivyAuthScreen) ─
 
@@ -761,8 +764,18 @@ export function ArcadeCenterScreen() {
   const [tradeStatusText, setTradeStatusText] = useState<string | null>(null);
   const [tradeDrawerOpen, setTradeDrawerOpen] = useState(false);
   const [tradeMode, setTradeMode] = useState<'BUY' | 'SELL'>('BUY');
-  const tradeDrawerX = useRef(new Animated.Value(SCREEN_WIDTH)).current;
+  const [tradeStage, setTradeStage] = useState<'review' | 'processing' | 'success'>('review');
+  const [tradeFlowFrom, setTradeFlowFrom] = useState<string>('--');
+  const [tradeFlowTo, setTradeFlowTo] = useState<string>('--');
+  const [tradeResultText, setTradeResultText] = useState<string>('');
+  const [tradeSwipeActive, setTradeSwipeActive] = useState(false);
+  const [swipeFillPx, setSwipeFillPx] = useState(0);
+  const tradeSheetY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const swipeX = useRef(new Animated.Value(0)).current;
   const isSyncingChessAuthRef = useRef(false);
+  const tradeStageRef = useRef<'review' | 'processing' | 'success'>('review');
+  const tradeBusyRef = useRef(false);
+  const triggerTradeRef = useRef<() => void>(() => {});
 
   const fetchPoints = async () => {
     console.log('fetchPoints', auth.user);
@@ -838,10 +851,14 @@ export function ArcadeCenterScreen() {
   const openTradeDrawer = (mode: 'BUY' | 'SELL') => {
     setTradeMode(mode);
     setTradeStatusText(null);
+    setTradeResultText('');
+    setTradeStage('review');
+    swipeX.setValue(0);
+    setSwipeFillPx(0);
     setTradeDrawerOpen(true);
-    Animated.spring(tradeDrawerX, {
+    Animated.spring(tradeSheetY, {
       toValue: 0,
-      tension: 70,
+      tension: 80,
       friction: 12,
       useNativeDriver: true,
     }).start();
@@ -849,9 +866,9 @@ export function ArcadeCenterScreen() {
 
   const closeTradeDrawer = () => {
     if (tradeBusy) return;
-    Animated.timing(tradeDrawerX, {
-      toValue: SCREEN_WIDTH,
-      duration: 220,
+    Animated.timing(tradeSheetY, {
+      toValue: SCREEN_HEIGHT,
+      duration: 250,
       easing: Easing.inOut(Easing.cubic),
       useNativeDriver: true,
     }).start(({ finished }) => {
@@ -881,10 +898,13 @@ export function ArcadeCenterScreen() {
     }
 
     setTradeBusy(true);
+    setTradeStage('processing');
     setTradeStatusText('Awaiting Privy wallet approval...');
     try {
       const fromPubkey = new PublicKey(walletAddress);
       const toPubkey = new PublicKey(TREASURY_WALLET);
+      setTradeFlowFrom(walletAddress);
+      setTradeFlowTo(TREASURY_WALLET);
       const lamports = Math.round(TRADE_SOL * LAMPORTS_PER_SOL);
       const { blockhash } = await connectionRef.current.getLatestBlockhash('confirmed');
       const tx = new Transaction({
@@ -909,13 +929,14 @@ export function ArcadeCenterScreen() {
 
       setTradeStatusText('Transaction confirmed. Updating points...');
       const updatedPoints = await applyPointsDelta(TRADE_POINTS);
-      Alert.alert(
-        'Buy successful',
-        `Sent ${TRADE_SOL} SOL.\n+${TRADE_POINTS} points.\nBalance: ${updatedPoints}${
+      setTradeResultText(
+        `Sent ${TRADE_SOL} SOL\n+${TRADE_POINTS} points\nBalance: ${updatedPoints}${
           txResult.signature ? `\nTx: ${txResult.signature.slice(0, 20)}...` : ''
         }`,
       );
+      setTradeStage('success');
     } catch (error) {
+      setTradeStage('review');
       Alert.alert('Buy failed', error instanceof Error ? error.message : 'Unable to complete purchase.');
     } finally {
       setTradeBusy(false);
@@ -943,6 +964,7 @@ export function ArcadeCenterScreen() {
     }
 
     setTradeBusy(true);
+    setTradeStage('processing');
     setTradeStatusText('Awaiting Privy wallet signature...');
     try {
       const provider = await solanaWallet.wallets[0].getProvider();
@@ -954,20 +976,83 @@ export function ArcadeCenterScreen() {
       });
 
       setTradeStatusText('Signature complete. Processing treasury payout...');
+      setTradeFlowFrom('TREASURY');
+      setTradeFlowTo(walletAddress);
       const sellResponse = await sellPoints(walletAddress);
       const updatedPoints = sellResponse.points;
       setPoints(updatedPoints);
-      Alert.alert(
-        'Sell successful',
-        `${sellResponse.payoutSol} SOL sent from treasury.\n-${sellResponse.pointsSpent} points.\nBalance: ${updatedPoints}\nTx: ${sellResponse.txSignature.slice(0, 20)}...`,
+      setTradeResultText(
+        `${sellResponse.payoutSol} SOL sent from treasury\n-${sellResponse.pointsSpent} points\nBalance: ${updatedPoints}\nTx: ${sellResponse.txSignature.slice(0, 20)}...`,
       );
+      setTradeStage('success');
     } catch (error) {
+      setTradeStage('review');
       Alert.alert('Sell failed', error instanceof Error ? error.message : 'Unable to complete sell flow.');
     } finally {
       setTradeBusy(false);
       setTradeStatusText(null);
     }
   }, [applyPointsDelta, auth.user, points, solanaWallet, tradeBusy]);
+
+  const triggerTradeFromSwipe = useCallback(() => {
+    if (tradeBusy || tradeStage !== 'review') return;
+    void (tradeMode === 'BUY' ? handleBuyPoints() : handleSellPoints());
+  }, [handleBuyPoints, handleSellPoints, tradeBusy, tradeMode, tradeStage]);
+
+  useEffect(() => {
+    tradeStageRef.current = tradeStage;
+    tradeBusyRef.current = tradeBusy;
+    triggerTradeRef.current = triggerTradeFromSwipe;
+  }, [tradeBusy, tradeStage, triggerTradeFromSwipe]);
+
+  const swipeResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dx) > Math.abs(gestureState.dy) &&
+        tradeStageRef.current === 'review' &&
+        !tradeBusyRef.current,
+      onPanResponderGrant: () => {
+        setTradeSwipeActive(true);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const clamped = Math.max(0, Math.min(gestureState.dx, SWIPE_MAX_DISTANCE));
+        swipeX.setValue(clamped);
+        setSwipeFillPx(clamped);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        setTradeSwipeActive(false);
+        const threshold = SWIPE_MAX_DISTANCE * 0.85;
+        if (gestureState.dx >= threshold) {
+          setSwipeFillPx(SWIPE_MAX_DISTANCE);
+          Animated.timing(swipeX, {
+            toValue: SWIPE_MAX_DISTANCE,
+            duration: 120,
+            useNativeDriver: true,
+          }).start(() => {
+            triggerTradeRef.current();
+          });
+          return;
+        }
+        setSwipeFillPx(0);
+        Animated.spring(swipeX, {
+          toValue: 0,
+          tension: 70,
+          friction: 10,
+          useNativeDriver: true,
+        }).start();
+      },
+      onPanResponderTerminate: () => {
+        setTradeSwipeActive(false);
+        setSwipeFillPx(0);
+        Animated.spring(swipeX, {
+          toValue: 0,
+          tension: 70,
+          friction: 10,
+          useNativeDriver: true,
+        }).start();
+      },
+    }),
+  ).current;
 
   const handleChessPress = async () => {
     if (!privyReady || !privyUser || chessLoading) return;
@@ -1129,84 +1214,119 @@ export function ArcadeCenterScreen() {
               <Pressable style={styles.drawerBackdrop} onPress={closeTradeDrawer} />
               <Animated.View
                 style={[
-                  styles.tradeDrawer,
+                  styles.tradeSheet,
                   {
-                    transform: [{ translateX: tradeDrawerX }],
-                    paddingTop: insets.top + 12,
+                    transform: [{ translateY: tradeSheetY }],
+                    paddingTop: insets.top + 10,
                     paddingBottom: insets.bottom + 18,
                   },
                 ]}
               >
-                <View style={styles.drawerHeader}>
+                <View style={styles.sheetHeader}>
                   <Pressable onPress={closeTradeDrawer} style={styles.drawerBackBtn}>
                     <MaterialCommunityIcons name="arrow-left" size={18} color={ELECTRIC_CYAN} />
                     <Text style={styles.drawerBackText}>BACK</Text>
                   </Pressable>
-                  <Text style={pixelLoaded ? styles.drawerTitlePixel : styles.drawerTitleFallback}>
-                    {tradeMode} PANEL
+                  <Text style={pixelLoaded ? styles.sheetTitlePixel : styles.sheetTitleFallback}>
+                    {tradeMode} TERMINAL
                   </Text>
                   <View style={styles.drawerBackBtn} />
                 </View>
-                <View style={styles.drawerBody}>
-                  <MaterialCommunityIcons
-                    name={tradeMode === 'BUY' ? 'cart-plus' : 'cash-minus'}
-                    size={54}
-                    color={tradeMode === 'BUY' ? NEON_YELLOW : HOT_PINK}
-                  />
-                  <Text style={styles.drawerBodyTitle}>
-                    {tradeMode === 'BUY' ? `BUY ${TRADE_POINTS} POINTS` : `SELL ${TRADE_POINTS} POINTS`}
-                  </Text>
-                  <Text style={styles.drawerBodyHint}>
-                    {tradeMode === 'BUY'
-                      ? `${TRADE_SOL} SOL -> ${TRADE_POINTS} points (Privy sign + send)`
-                      : `${TRADE_POINTS} points -> ${TRADE_SOL} SOL (devnet airdrop demo)`}
-                  </Text>
-                  <View style={styles.drawerStatBox}>
-                    <Text style={styles.drawerStatLabel}>CURRENT POINTS</Text>
-                    {pointsLoading ? (
-                      <ActivityIndicator size="small" color={NEON_YELLOW} />
-                    ) : (
-                      <Text style={styles.drawerStatValue}>{points ?? '--'}</Text>
-                    )}
-                  </View>
-                  {tradeStatusText ? (
-                    <View style={styles.drawerStatusRow}>
-                      <ActivityIndicator size="small" color={ELECTRIC_CYAN} />
-                      <Text style={styles.drawerStatusText}>{tradeStatusText}</Text>
-                    </View>
-                  ) : null}
-                  <Pressable
-                    style={[
-                      styles.drawerActionBtn,
-                      tradeMode === 'BUY' ? styles.drawerActionBtnBuy : styles.drawerActionBtnSell,
-                      tradeBusy && styles.utilityBtnDisabled,
-                    ]}
-                    disabled={tradeBusy}
-                    onPress={() => void (tradeMode === 'BUY' ? handleBuyPoints() : handleSellPoints())}
-                  >
-                    <MaterialCommunityIcons
-                      name={tradeMode === 'BUY' ? 'wallet-plus-outline' : 'cash-refund'}
-                      size={18}
-                      color={tradeMode === 'BUY' ? NEON_YELLOW : HOT_PINK}
-                    />
-                    <Text
-                      style={[
-                        styles.drawerActionBtnText,
-                        { color: tradeMode === 'BUY' ? NEON_YELLOW : HOT_PINK },
-                      ]}
-                    >
-                      {tradeBusy
-                        ? 'PROCESSING...'
-                        : tradeMode === 'BUY'
-                          ? `PAY ${TRADE_SOL} SOL`
-                          : `REDEEM ${TRADE_POINTS} PTS`}
-                    </Text>
-                  </Pressable>
-                  <Text style={styles.drawerBodyHint}>
-                    {tradeMode === 'BUY'
-                      ? `Destination wallet: ${TREASURY_WALLET.slice(0, 8)}...${TREASURY_WALLET.slice(-8)}`
-                      : 'Sell uses devnet airdrop for demo mode.'}
-                  </Text>
+                <View style={styles.sheetBody}>
+                  {tradeStage === 'review' && (
+                    <>
+                      <MaterialCommunityIcons
+                        name={tradeMode === 'BUY' ? 'cart-plus' : 'cash-minus'}
+                        size={50}
+                        color={tradeMode === 'BUY' ? NEON_YELLOW : HOT_PINK}
+                      />
+                      <Text style={styles.sheetMainTitle}>
+                        {tradeMode === 'BUY' ? `BUY ${TRADE_POINTS} POINTS` : `SELL ${TRADE_POINTS} POINTS`}
+                      </Text>
+                      <Text style={styles.sheetHint}>
+                        {tradeMode === 'BUY'
+                          ? `${TRADE_SOL} SOL -> ${TRADE_POINTS} points`
+                          : `${TRADE_POINTS} points -> ${TRADE_SOL} SOL`}
+                      </Text>
+                      <View style={styles.drawerStatBox}>
+                        <Text style={styles.drawerStatLabel}>CURRENT POINTS</Text>
+                        {pointsLoading ? (
+                          <ActivityIndicator size="small" color={NEON_YELLOW} />
+                        ) : (
+                          <Text style={styles.drawerStatValue}>{points ?? '--'}</Text>
+                        )}
+                      </View>
+                      <View style={styles.flowRow}>
+                        <Text style={styles.flowLabel}>FROM</Text>
+                        <Text style={styles.flowValue}>
+                          {tradeMode === 'BUY'
+                            ? (solanaWallet.wallets?.[0]?.address ?? 'Your Wallet')
+                            : 'Treasury Wallet'}
+                        </Text>
+                      </View>
+                      <View style={styles.flowRow}>
+                        <Text style={styles.flowLabel}>TO</Text>
+                        <Text style={styles.flowValue}>
+                          {tradeMode === 'BUY'
+                            ? `${TREASURY_WALLET.slice(0, 8)}...${TREASURY_WALLET.slice(-8)}`
+                            : (solanaWallet.wallets?.[0]?.address ?? 'Your Wallet')}
+                        </Text>
+                      </View>
+                      <View style={styles.swipeSection}>
+                        <Text style={styles.swipeLabelOutside}>Swipe to approve</Text>
+                        <View style={styles.swipeTrack}>
+                          {swipeFillPx > 0 ? <View style={[styles.swipeFill, { width: swipeFillPx }]} /> : null}
+                          <Animated.View
+                            style={[
+                              styles.swipeKnob,
+                              tradeSwipeActive && styles.swipeKnobActive,
+                              { transform: [{ translateX: swipeX }] },
+                            ]}
+                            {...swipeResponder.panHandlers}
+                          >
+                            <MaterialCommunityIcons name="swap-horizontal" size={22} color={BG} />
+                          </Animated.View>
+                        </View>
+                      </View>
+                    </>
+                  )}
+
+                  {tradeStage === 'processing' && (
+                    <>
+                      <ActivityIndicator size="large" color={ELECTRIC_CYAN} />
+                      <Text style={styles.sheetMainTitle}>PROCESSING TRANSACTION</Text>
+                      <Text style={styles.sheetHint}>{tradeStatusText ?? 'Preparing request...'}</Text>
+                      <View style={styles.flowRow}>
+                        <Text style={styles.flowLabel}>FROM</Text>
+                        <Text style={styles.flowValue}>{tradeFlowFrom}</Text>
+                      </View>
+                      <View style={styles.flowRow}>
+                        <Text style={styles.flowLabel}>TO</Text>
+                        <Text style={styles.flowValue}>{tradeFlowTo}</Text>
+                      </View>
+                    </>
+                  )}
+
+                  {tradeStage === 'success' && (
+                    <>
+                      <View style={styles.successCircle}>
+                        <MaterialCommunityIcons name="check" size={42} color="#22c55e" />
+                      </View>
+                      <Text style={styles.successTitle}>SUCCESS</Text>
+                      <Text style={styles.sheetHint}>{tradeResultText}</Text>
+                      <View style={styles.flowRow}>
+                        <Text style={styles.flowLabel}>FROM</Text>
+                        <Text style={styles.flowValue}>{tradeFlowFrom}</Text>
+                      </View>
+                      <View style={styles.flowRow}>
+                        <Text style={styles.flowLabel}>TO</Text>
+                        <Text style={styles.flowValue}>{tradeFlowTo}</Text>
+                      </View>
+                      <Pressable style={styles.doneBtn} onPress={closeTradeDrawer}>
+                        <Text style={styles.doneBtnText}>DONE</Text>
+                      </Pressable>
+                    </>
+                  )}
                 </View>
               </Animated.View>
             </>
@@ -1973,18 +2093,21 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  tradeDrawer: {
+  tradeSheet: {
     position: 'absolute',
+    left: 0,
     right: 0,
     top: 0,
     bottom: 0,
-    width: Math.min(SCREEN_WIDTH * 0.82, 360),
     backgroundColor: 'rgba(7,7,7,0.98)',
-    borderLeftWidth: 1.5,
-    borderLeftColor: 'rgba(0,245,255,0.25)',
-    paddingHorizontal: 14,
+    borderTopWidth: 2,
+    borderTopColor: 'rgba(0,245,255,0.35)',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    minHeight: SCREEN_HEIGHT,
+    paddingHorizontal: 16,
   },
-  drawerHeader: {
+  sheetHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -2008,38 +2131,45 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 1,
   },
-  drawerTitlePixel: {
+  sheetTitlePixel: {
     fontFamily: PIXEL_FONT,
     fontSize: 11,
     color: NEON_YELLOW,
     letterSpacing: 1.4,
   },
-  drawerTitleFallback: {
+  sheetTitleFallback: {
     fontWeight: '900',
     fontSize: 14,
     color: NEON_YELLOW,
     letterSpacing: 2.4,
   },
-  drawerBody: {
+  sheetBody: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     gap: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
-    borderRadius: 10,
+    borderRadius: 16,
     backgroundColor: 'rgba(12,12,12,0.8)',
     paddingHorizontal: 18,
+    paddingVertical: 18,
+    shadowColor: ELECTRIC_CYAN,
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
   },
-  drawerBodyTitle: {
+  sheetMainTitle: {
     color: INK,
     fontWeight: '800',
     fontSize: 16,
+    textAlign: 'center',
   },
-  drawerBodyHint: {
+  sheetHint: {
     color: DIM,
     fontSize: 12,
     textAlign: 'center',
+    lineHeight: 18,
   },
   utilityBtnDisabled: {
     opacity: 0.45,
@@ -2103,6 +2233,119 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 1,
     fontWeight: '800',
+  },
+  flowRow: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    gap: 4,
+  },
+  flowLabel: {
+    color: DIM,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  flowValue: {
+    color: ELECTRIC_CYAN,
+    fontSize: 12,
+    letterSpacing: 0.4,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  swipeSection: {
+    width: '100%',
+    marginTop: 'auto',
+    marginBottom: 52,
+    gap: 8,
+  },
+  swipeLabelOutside: {
+    color: 'rgba(236,240,245,0.72)',
+    fontSize: 11,
+    textAlign: 'center',
+    letterSpacing: 0.8,
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  swipeTrack: {
+    width: '100%',
+    borderRadius: 34,
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,245,255,0.45)',
+    backgroundColor: 'rgba(5,8,10,0.95)',
+    padding: 5,
+    marginTop: 2,
+    minHeight: 58,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  swipeFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(34,197,94,0.22)',
+    borderTopLeftRadius: 34,
+    borderBottomLeftRadius: 34,
+  },
+  swipeKnob: {
+    width: SWIPE_KNOB_SIZE,
+    height: SWIPE_KNOB_SIZE,
+    borderRadius: SWIPE_KNOB_SIZE / 2,
+    backgroundColor: NEON_YELLOW,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: NEON_YELLOW,
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  swipeKnobActive: {
+    shadowOpacity: 0.85,
+    shadowRadius: 18,
+    borderColor: 'rgba(0,245,255,0.95)',
+    backgroundColor: '#fff176',
+  },
+  successCircle: {
+    width: 94,
+    height: 94,
+    borderRadius: 47,
+    borderWidth: 2,
+    borderColor: 'rgba(34,197,94,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(34,197,94,0.1)',
+    marginTop: 6,
+  },
+  successTitle: {
+    color: '#22c55e',
+    fontFamily: PIXEL_FONT,
+    fontSize: 13,
+    letterSpacing: 1.6,
+  },
+  doneBtn: {
+    marginTop: 8,
+    minWidth: 140,
+    minHeight: 42,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: 'rgba(34,197,94,0.45)',
+    backgroundColor: 'rgba(34,197,94,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  doneBtnText: {
+    color: '#22c55e',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontWeight: '800',
+    fontSize: 12,
+    letterSpacing: 1.2,
   },
   chessLoaderOverlay: {
     ...StyleSheet.absoluteFillObject,
