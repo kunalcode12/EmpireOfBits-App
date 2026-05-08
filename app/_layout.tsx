@@ -17,6 +17,7 @@ import 'react-native-reanimated';
 import { PRIVY_APP_ID, PRIVY_CLIENT_ID, privyConfigured } from '../constants/privyConfig';
 import { AuthProvider } from '../store/AuthContext';
 import { GameProvider } from '../store/GameContext';
+import { PointsProvider } from '../store/PointsContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -80,15 +81,17 @@ export default function RootLayout() {
       />
       <ThemeProvider value={DarkTheme}>
         <AuthProvider>
-          <GameProvider>
-            <Stack initialRouteName="privy-auth" screenOptions={{ headerShown: false, animation: 'fade' }}>
-              <Stack.Screen name="privy-auth" />
-              <Stack.Screen name="index" />
-              <Stack.Screen name="auth-flow" />
-              <Stack.Screen name="(tabs)" />
-            </Stack>
-            <StatusBar style="light" />
-          </GameProvider>
+          <PointsProvider>
+            <GameProvider>
+              <Stack initialRouteName="privy-auth" screenOptions={{ headerShown: false, animation: 'fade' }}>
+                <Stack.Screen name="privy-auth" />
+                <Stack.Screen name="index" />
+                <Stack.Screen name="auth-flow" />
+                <Stack.Screen name="(tabs)" />
+              </Stack>
+              <StatusBar style="light" />
+            </GameProvider>
+          </PointsProvider>
         </AuthProvider>
       </ThemeProvider>
     </PrivyProvider>

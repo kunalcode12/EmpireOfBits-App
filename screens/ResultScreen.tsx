@@ -1,10 +1,28 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEmbeddedSolanaWallet } from '@privy-io/expo';
 import { router } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { formatClock } from '../hooks/useTimer';
 import { useGame } from '../store/GameContext';
+import { getSession, setToken, updateSessionStatus } from '../lib/vorldTV';
+import {
+  clearReactiveSessionId,
+  loadReactiveSnapshot,
+} from '../utils/reactiveStorageHelper';
+
+// Reactive accents — same palette used in ArcadeCenterScreen / GameScreen.
+const REACTIVE_PINK = '#FF006E';
+const REACTIVE_CYAN = '#00F5FF';
+
+type ReactiveSessionStatus =
+  | 'unknown'
+  | 'waiting'
+  | 'active'
+  | 'completed'
+  | 'cancelled'
+  | 'aborted';
 
 const RUNE_MAP: Record<string, string> = {
   E: 'ᛖ', M: 'ᛗ', P: 'ᛈ', I: 'ᛁ', R: 'ᚱ',
@@ -55,6 +73,93 @@ export function ResultScreen() {
     return `Empire of Bits rating update: ${result.newRating}`;
   }, [result?.newRating]);
 
+  // ─── Reactive session footer (additive — no chess logic touched) ──────────
+  const [reactiveOn, setReactiveOn] = useState(false);
+  const [twitchHandle, setTwitchHandle] = useState<string | null>(null);
+  const [reactiveAccessToken, setReactiveAccessToken] = useState<string | null>(null);
+  const [reactiveSessionId, setReactiveSessionId] = useState<string | null>(null);
+  const [reactiveSessionStatus, setReactiveSessionStatus] = useState<ReactiveSessionStatus>('unknown');
+  const [endingSession, setEndingSession] = useState(false);
+  const [endSessionError, setEndSessionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      try {
+        const snap = await loadReactiveSnapshot();
+        if (!mounted) return;
+        const live = Boolean(snap.enabled && snap.accessToken && snap.user);
+        setReactiveOn(live);
+        if (snap.streamUrl) {
+          const m = snap.streamUrl.match(/twitch\.tv\/([a-zA-Z0-9_]+)/);
+          setTwitchHandle(m ? m[1] : snap.streamUrl);
+        }
+        console.log('snap', snap);
+        if (snap.accessToken) setReactiveAccessToken(snap.accessToken);
+        if (snap.sessionId) setReactiveSessionId(snap.sessionId);
+
+        // Probe the session so we only show END SESSION when it's not already finished.
+        if (snap.sessionId && snap.accessToken) {
+          try {
+            setToken(snap.accessToken);
+            // Also pass the token explicitly so the request carries it even if
+            // the axios default header isn't applied for any reason.
+            const probe = await getSession(snap.sessionId, snap.accessToken);
+            const body = (probe as { data?: unknown }).data as
+              | { data?: { session?: { status?: string } }; session?: { status?: string }; status?: string }
+              | undefined;
+            const status = (body?.data?.session?.status ?? body?.session?.status ?? body?.status ?? '').toLowerCase();
+            if (mounted) {
+              if (
+                status === 'waiting' ||
+                status === 'active' ||
+                status === 'completed' ||
+                status === 'cancelled' ||
+                status === 'aborted'
+              ) {
+                setReactiveSessionStatus(status as ReactiveSessionStatus);
+              } else if (status) {
+                setReactiveSessionStatus('unknown');
+              }
+            }
+          } catch {
+            // probe failed — leave status as unknown; user can still hit END SESSION.
+          }
+        }
+      } catch {
+        // ignore — reactive footer simply won't render
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const sessionFinished =
+    reactiveSessionStatus === 'completed' ||
+    reactiveSessionStatus === 'cancelled' ||
+    reactiveSessionStatus === 'aborted';
+
+  const handleEndReactiveSession = async () => {
+    console.log('reactiveSessionId', reactiveSessionId);
+    if (!reactiveSessionId || !reactiveAccessToken || endingSession) return;
+    setEndingSession(true);
+    setEndSessionError(null);
+    try {
+      setToken(reactiveAccessToken);
+      // Pass the token explicitly so the PATCH carries Authorization
+      // even if the axios instance default header was lost.
+      await updateSessionStatus(reactiveSessionId, 'completed', reactiveAccessToken);
+      await clearReactiveSessionId();
+      setReactiveSessionStatus('completed');
+      setReactiveSessionId(null);
+    } catch (error) {
+      setEndSessionError(error instanceof Error ? error.message : 'Failed to end session.');
+    } finally {
+      setEndingSession(false);
+    }
+  };
+
   const onSignRating = async () => {
     if (!ratingMessage || signing) return;
     setSigning(true);
@@ -85,14 +190,39 @@ export function ResultScreen() {
   };
 
   const handleHomePress = async () => {
+    // Clean up the saved reactive session id so re-entering the lobby
+    // doesn't think a stale session is still live.
+    await clearReactiveSessionId();
+    setReactiveSessionId(null);
     await Promise.resolve(game.resetGame());
     router.push('/(tabs)/play');
   };
 
+  const handlePlayAgain = () => {
+    // "Play Again" only resets local game state; the reactive session id
+    // stays intact so a follow-up match can still bind to the same session.
+    game.resetGame();
+  };
+
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, reactiveOn && styles.screenReactive]}>
       <RunicBackground />
-      <Text style={styles.headline}>{headline}</Text>
+      {reactiveOn && (
+        <View style={styles.reactiveBadge}>
+          <View style={styles.reactiveBadgeDot} />
+          <Text style={styles.reactiveBadgeText}>REACTIVE GAME</Text>
+          {twitchHandle ? (
+            <>
+              <Text style={styles.reactiveBadgeDivider}>·</Text>
+              <MaterialCommunityIcons name="twitch" size={11} color={REACTIVE_PINK} />
+              <Text style={styles.reactiveBadgeHandle} numberOfLines={1}>
+                @{twitchHandle}
+              </Text>
+            </>
+          ) : null}
+        </View>
+      )}
+      <Text style={[styles.headline, reactiveOn && styles.headlineReactive]}>{headline}</Text>
       <Text style={styles.reason}>{result?.reason ?? 'Game finished'}</Text>
       {result?.message ? <Text style={styles.message}>{result.message}</Text> : null}
       <View style={styles.stats}>
@@ -125,7 +255,57 @@ export function ResultScreen() {
           {signError ? <Text style={styles.signError}>{signError}</Text> : null}
         </View>
       ) : null}
-      <Pressable style={styles.primary} onPress={game.resetGame}>
+      {reactiveOn && reactiveSessionId && !sessionFinished ? (
+        <View style={styles.reactiveSessionCard}>
+          <View style={styles.reactiveSessionHeaderRow}>
+            <MaterialCommunityIcons name="broadcast" size={16} color={REACTIVE_PINK} />
+            <Text style={styles.reactiveSessionTitle}>REACTIVE SESSION</Text>
+            <View style={styles.reactiveSessionStatusPill}>
+              <View
+                style={[
+                  styles.reactiveSessionStatusDot,
+                  reactiveSessionStatus === 'active' && styles.reactiveSessionStatusDotActive,
+                ]}
+              />
+              <Text style={styles.reactiveSessionStatusText}>
+                {reactiveSessionStatus === 'unknown' ? 'OPEN' : reactiveSessionStatus.toUpperCase()}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.reactiveSessionId} numberOfLines={1}>
+            ID: {reactiveSessionId}
+          </Text>
+          <Pressable
+            style={[styles.endSessionBtn, endingSession && styles.endSessionBtnDisabled]}
+            onPress={() => void handleEndReactiveSession()}
+            disabled={endingSession}
+          >
+            {endingSession ? (
+              <ActivityIndicator size="small" color={REACTIVE_PINK} />
+            ) : (
+              <>
+                <MaterialCommunityIcons name="stop-circle-outline" size={14} color={REACTIVE_PINK} />
+                <Text style={styles.endSessionBtnText}>END SESSION</Text>
+              </>
+            )}
+          </Pressable>
+          {endSessionError ? (
+            <Text style={styles.endSessionError}>{endSessionError}</Text>
+          ) : null}
+        </View>
+      ) : null}
+      {reactiveOn && sessionFinished ? (
+        <View style={styles.reactiveClosedNote}>
+          <MaterialCommunityIcons name="check-circle-outline" size={14} color={REACTIVE_CYAN} />
+          <Text style={styles.reactiveClosedNoteText}>
+            Reactive session {reactiveSessionStatus}.
+          </Text>
+        </View>
+      ) : null}
+      <Pressable
+        style={[styles.primary, reactiveOn && styles.primaryReactive]}
+        onPress={handlePlayAgain}
+      >
         <Text style={styles.primaryText}>Play Again</Text>
       </Pressable>
       <Pressable style={styles.secondary} onPress={() => void handleHomePress()}>
@@ -332,5 +512,174 @@ const styles = StyleSheet.create({
     color: colors.mutedText,
     fontSize: typography.body,
     fontWeight: '900',
+  },
+  screenReactive: {
+    backgroundColor: '#0a050a',
+  },
+  reactiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.10)',
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    marginBottom: spacing.md,
+  },
+  reactiveBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: REACTIVE_PINK,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.95,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveBadgeText: {
+    color: REACTIVE_PINK,
+    fontWeight: '900',
+    fontSize: typography.tiny,
+    letterSpacing: 1.4,
+  },
+  reactiveBadgeDivider: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: typography.tiny,
+  },
+  reactiveBadgeHandle: {
+    color: REACTIVE_PINK,
+    fontWeight: '800',
+    fontSize: typography.tiny,
+    letterSpacing: 0.4,
+    maxWidth: 130,
+  },
+  headlineReactive: {
+    color: '#ffd6e6',
+    textShadowColor: REACTIVE_PINK,
+    textShadowRadius: 14,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  reactiveSessionCard: {
+    width: '100%',
+    borderRadius: radii.md,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.07)',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    gap: 8,
+    marginBottom: spacing.lg,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveSessionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  reactiveSessionTitle: {
+    flex: 1,
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.small,
+    letterSpacing: 1.4,
+  },
+  reactiveSessionStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  reactiveSessionStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#9ca3af',
+  },
+  reactiveSessionStatusDotActive: {
+    backgroundColor: '#22c55e',
+  },
+  reactiveSessionStatusText: {
+    color: colors.text,
+    fontSize: typography.tiny,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  reactiveSessionId: {
+    color: colors.subtleText,
+    fontSize: typography.tiny,
+    letterSpacing: 0.4,
+  },
+  endSessionBtn: {
+    minHeight: 40,
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.10)',
+  },
+  endSessionBtnDisabled: {
+    opacity: 0.5,
+  },
+  endSessionBtnText: {
+    color: REACTIVE_PINK,
+    fontWeight: '800',
+    fontSize: typography.tiny,
+    letterSpacing: 1.2,
+  },
+  endSessionError: {
+    color: '#fca5a5',
+    fontSize: typography.tiny,
+    fontWeight: '700',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.45)',
+    backgroundColor: 'rgba(239,68,68,0.08)',
+  },
+  reactiveClosedNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'center',
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.45)',
+    backgroundColor: 'rgba(0,245,255,0.08)',
+  },
+  reactiveClosedNoteText: {
+    color: REACTIVE_CYAN,
+    fontSize: typography.tiny,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  primaryReactive: {
+    backgroundColor: REACTIVE_PINK,
+    borderWidth: 1.5,
+    borderColor: REACTIVE_CYAN,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
   },
 });

@@ -604,6 +604,12 @@ export function PrivyAuthScreen() {
     }
   }, [appDisplayUrl]);
 
+  useEffect(() => {
+    if (isReady && user) {
+      router.replace('/(tabs)');
+    }
+  }, [isReady, user]);
+
   const onSendCode = useCallback(async () => {
     setLocalError(null);
     const trimmed = email.trim();

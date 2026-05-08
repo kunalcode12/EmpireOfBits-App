@@ -1,5 +1,4 @@
 import { usePrivy } from '@privy-io/expo';
-import { registerOrLogin } from '../api/authApi';
 import * as Font from 'expo-font';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
@@ -17,6 +16,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { registerOrLogin } from '../api/authApi';
 
 import { getPrivyEmail } from '../utils/privyUser';
 import { saveStoredUser } from '../utils/storageHelper';
@@ -28,11 +28,18 @@ const PRESS_START_2P_URI =
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const BG      = '#050505';
 const BG_MID  = '#0e0e0e';
+const SURFACE = '#0a0a0a';
+const HAIRLINE = 'rgba(255,255,255,0.08)';
+const HAIRLINE_HI = 'rgba(255,255,255,0.14)';
 const AMBER   = '#FFB800';
 const AMBER_D = '#b38200';
+const AMBER_DIM = 'rgba(255,184,0,0.55)';
 const PURPLE  = '#9B30FF';
 const TEAL    = '#00FFC2';
+const TEAL_DIM = 'rgba(0,255,194,0.55)';
 const DIM     = '#6b7280';
+const DIM_HI  = '#9ca3af';
+const INK     = '#f5f5f5';
 const MAG_D   = '#c026d3';
 const CRT_TINT  = 'rgba(255,255,255,0.04)';
 const VIGNETTE  = 'rgba(0,0,0,0.25)';
@@ -188,6 +195,9 @@ export default function HomeScreen() {
   // CTA idle scale pulse
   const ctaScale = useRef(new Animated.Value(1)).current;
 
+  // Online dot pulse
+  const onlinePulse = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
     Font.loadAsync({ PressStart2P: PRESS_START_2P_URI })
       .catch(() => null)
@@ -210,6 +220,16 @@ export default function HomeScreen() {
       Animated.sequence([
         Animated.timing(ctaScale, { toValue: 1.03, duration: 1000, useNativeDriver: true }),
         Animated.timing(ctaScale, { toValue: 1,    duration: 1000, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
+  // Online dot pulse
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(onlinePulse, { toValue: 1, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(onlinePulse, { toValue: 0, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ])
     ).start();
   }, []);
@@ -257,6 +277,8 @@ export default function HomeScreen() {
     }],
   });
 
+  const onlineDotOpacity = onlinePulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1] });
+
   return (
     <View style={s.root}>
       <RunicBackground />
@@ -266,51 +288,159 @@ export default function HomeScreen() {
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}
       >
+        {/* ── TOP STATUS BAR ────────────────────────────────────── */}
+        <View style={s.topBar}>
+          <View style={s.brandChip}>
+            <View style={s.brandGlyphBox}>
+              <Text style={s.brandGlyph}>◈</Text>
+            </View>
+            <View>
+              <Text style={s.brandTag}>EMPIRE</Text>
+              <Text style={s.brandSub}>arcade · onchain</Text>
+            </View>
+          </View>
+          <View style={s.statusChip}>
+            <Animated.View style={[s.statusDot, { opacity: onlineDotOpacity }]} />
+            <Text style={s.statusText}>ONLINE</Text>
+          </View>
+        </View>
 
-        {/* ── LOGO + TITLE ──────────────────────────────────────── */}
-        <Animated.View style={[s.logoSection, fadeSlide(logoAnim)]}>
-          <Image
-            source={require('../assets/images/empire.jpg')}
-            style={s.logoImage}
-            contentFit="cover"
-          />
-          <Text style={s.title}>EMPIRE{'\n'}OF BITS</Text>
+        {/* ── HERO ──────────────────────────────────────────────── */}
+        <Animated.View style={[s.hero, fadeSlide(logoAnim)]}>
+          <View style={s.logoStage}>
+            <View style={s.logoOuterGlow} />
+            <View style={s.logoInnerGlow} />
+            <View style={s.logoFrame}>
+              <Image
+                source={require('../assets/images/empire.jpg')}
+                style={s.logoImage}
+                contentFit="cover"
+              />
+              <View style={[s.logoCorner, s.logoCornerTL]} />
+              <View style={[s.logoCorner, s.logoCornerTR]} />
+              <View style={[s.logoCorner, s.logoCornerBL]} />
+              <View style={[s.logoCorner, s.logoCornerBR]} />
+            </View>
+          </View>
+
+          
           <Text style={s.tagline}>WHERE EVERY GAME MATTERS</Text>
         </Animated.View>
 
-        {/* ── RANK + PLAYER EMAIL ──────────────────────────────── */}
-        <Animated.View style={[s.rankSection, fadeSlide(rankAnim)]}>
-          <Text style={s.rankLabel}>◈ RANK ◈</Text>
-          <Text style={s.rankTitle}>ROOKIE</Text>
-          <Text style={s.rankLevel}>LVL 01</Text>
-          <View style={s.rankDivider} />
-          <PlayerEmail />
-        </Animated.View>
+        {/* ── PLAYER PROFILE CARD ───────────────────────────────── */}
+        <Animated.View style={[s.playerCard, fadeSlide(rankAnim)]}>
+          <View style={[s.bracket, s.bracketTL]} />
+          <View style={[s.bracket, s.bracketTR]} />
+          <View style={[s.bracket, s.bracketBL]} />
+          <View style={[s.bracket, s.bracketBR]} />
 
-        {/* ── PLAY NOW ─────────────────────────────────────────── */}
-        <Animated.View style={[
-          fadeSlide(ctaAnim),
-          { transform: [
-            { translateY: ctaAnim.interpolate({ inputRange: [0, 1], outputRange: [32, 0] }) },
-            { scale: ctaScale },
-          ]},
-        ]}>
-          <View style={s.ctaGlow}>
-            <Pressable
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                router.push('/(tabs)/play');
-              }}
-              style={({ pressed }) => [s.ctaBtn, pressed && s.ctaPressed]}
-              android_ripple={{ color: 'rgba(0,0,0,0.2)' }}
-            >
-              <Text style={s.ctaText}>▶  PLAY NOW</Text>
-            </Pressable>
+          <View style={s.playerHead}>
+            <View style={s.playerBadge}>
+              <View style={s.playerBadgeDot} />
+              <Text style={s.playerBadgeText}>PLAYER PROFILE</Text>
+            </View>
+            <Text style={s.versionTag}>v1.0</Text>
+          </View>
+
+          <View style={s.statRow}>
+            <View style={s.statCol}>
+              <Text style={s.statLabel}>RANK</Text>
+              <Text style={s.statRank}>ROOKIE</Text>
+            </View>
+            <View style={s.statSep} />
+            <View style={s.statCol}>
+              <Text style={s.statLabel}>LEVEL</Text>
+              <View style={s.lvlValueRow}>
+                <Text style={s.statLvl}>01</Text>
+                <View style={s.lvlBars}>
+                  <View style={[s.lvlBlock, s.lvlBlockOn]} />
+                  <View style={s.lvlBlock} />
+                  <View style={s.lvlBlock} />
+                  <View style={s.lvlBlock} />
+                </View>
+              </View>
+            </View>
+          </View>
+
+          <View style={s.playerDivider} />
+
+          <View style={s.emailRow}>
+            <View style={s.emailGlyph}>
+              <Text style={s.emailGlyphText}>✉</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.emailLabel}>SIGNED IN</Text>
+              <PlayerEmail />
+            </View>
           </View>
         </Animated.View>
 
-        {/* ── FOOTER ───────────────────────────────────────────── */}
+        {/* ── ARCADE CTA CARD ───────────────────────────────────── */}
+        <Animated.View
+          style={[
+            s.ctaWrap,
+            {
+              opacity: ctaAnim,
+              transform: [
+                { translateY: ctaAnim.interpolate({ inputRange: [0, 1], outputRange: [32, 0] }) },
+                { scale: ctaScale },
+              ],
+            },
+          ]}
+        >
+          <View style={s.ctaCard}>
+            <View style={s.ctaCardGlow} />
+            <View style={[s.bracket, s.bracketAmberTL]} />
+            <View style={[s.bracket, s.bracketAmberTR]} />
+            <View style={[s.bracket, s.bracketAmberBL]} />
+            <View style={[s.bracket, s.bracketAmberBR]} />
+
+            <View style={s.ctaHeaderRow}>
+              <View style={s.readyChip}>
+                <View style={s.readyDot} />
+                <Text style={s.readyText}>ARCADE READY</Text>
+              </View>
+              <Text style={s.ctaCoinTag}>◎ ENTER</Text>
+            </View>
+
+            <Text style={s.ctaSubtitle}>Step into the arena</Text>
+
+            <View style={s.ctaGlowWrap}>
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  router.push('/(tabs)/play');
+                }}
+                style={({ pressed }) => [s.ctaBtn, pressed && s.ctaPressed]}
+                android_ripple={{ color: 'rgba(0,0,0,0.2)' }}
+              >
+                <View style={s.ctaBtnInner}>
+                  <View style={s.ctaArrowBox}>
+                    <Text style={s.ctaArrow}>▶</Text>
+                  </View>
+                  <Text style={s.ctaText}>PLAY NOW</Text>
+                </View>
+              </Pressable>
+            </View>
+
+            <View style={s.tagRow}>
+              <Text style={s.tagItem}>STRATEGY</Text>
+              <View style={s.tagBullet} />
+              <Text style={s.tagItem}>CLASSIC</Text>
+              <View style={s.tagBullet} />
+              <Text style={s.tagItem}>LIVE</Text>
+            </View>
+          </View>
+        </Animated.View>
+
+        {/* ── FOOTER ────────────────────────────────────────────── */}
         <View style={s.footer}>
+          <View style={s.chainPill}>
+            <Text style={s.chainGlyph}>◎</Text>
+            <Text style={s.chainLabel}>SOLANA</Text>
+            <View style={s.chainSep} />
+            <Text style={s.chainNet}>DEVNET</Text>
+          </View>
           <Text style={s.footerText}>
             <Text style={{ color: PURPLE }}>Powered </Text>
             <Text style={{ color: TEAL }}>by </Text>
@@ -328,18 +458,27 @@ export default function HomeScreen() {
       >
         <View style={s.modalOverlay}>
           <View style={s.modalCard}>
-            <Text style={s.modalBadge}>NEW CHAMPION UNLOCKED</Text>
+            <View style={[s.bracket, s.bracketAmberTL]} />
+            <View style={[s.bracket, s.bracketAmberTR]} />
+            <View style={[s.bracket, s.bracketAmberBL]} />
+            <View style={[s.bracket, s.bracketAmberBR]} />
+            <Text style={s.modalBadge}>◆ NEW CHAMPION UNLOCKED ◆</Text>
             <Text style={s.modalTitle}>CONGRATULATIONS!</Text>
             <Text style={s.modalSubTitle}>Your Empire of Bits profile is ready.</Text>
             <View style={s.pointsWrap}>
               <Text style={s.pointsLabel}>STARTING POINTS</Text>
               <Text style={s.pointsValue}>{newUserPoints}</Text>
+              <View style={s.pointsLineRow}>
+                <View style={s.pointsLine} />
+                <Text style={s.pointsLineText}>READY</Text>
+                <View style={s.pointsLine} />
+              </View>
             </View>
             <Pressable
               onPress={() => setIsCongratsModalVisible(false)}
               style={({ pressed }) => [s.modalBtn, pressed && s.modalBtnPressed]}
             >
-              <Text style={s.modalBtnText}>LET'S PLAY</Text>
+              <Text style={s.modalBtnText}>▶  LET'S PLAY</Text>
             </Pressable>
           </View>
         </View>
@@ -348,6 +487,10 @@ export default function HomeScreen() {
       {authLoading ? (
         <View style={s.loaderOverlay} pointerEvents="auto">
           <View style={s.loaderCard}>
+            <View style={[s.bracket, s.bracketAmberTL]} />
+            <View style={[s.bracket, s.bracketAmberTR]} />
+            <View style={[s.bracket, s.bracketAmberBL]} />
+            <View style={[s.bracket, s.bracketAmberBR]} />
             <ActivityIndicator size="large" color={AMBER} />
             <Text style={s.loaderTitle}>SYNCING PLAYER PROFILE...</Text>
             <Text style={s.loaderSubtitle}>Preparing your Empire account</Text>
@@ -424,133 +567,536 @@ const s = StyleSheet.create({
   scroll: { flex: 1 },
   content: {
     flexGrow: 1,
-    paddingHorizontal: 28,
-    paddingTop: 60,
+    paddingHorizontal: 22,
+    paddingTop: 18,
     paddingBottom: 60,
-    gap: 28,
-    justifyContent: 'center',
+    gap: 22,
   },
 
-  // ── Logo section
-  logoSection: {
+  // ── TOP STATUS BAR
+  topBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    justifyContent: 'space-between',
+    marginTop: 32,
+  },
+  brandChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  brandGlyphBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: AMBER_DIM,
+    backgroundColor: 'rgba(15,12,5,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandGlyph: {
+    color: AMBER,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  brandTag: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  brandSub: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM,
+    fontSize: 9,
+    letterSpacing: 1.5,
+    marginTop: 1,
+  },
+  statusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0,255,194,0.30)',
+    backgroundColor: 'rgba(0,255,194,0.06)',
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: TEAL,
+  },
+  statusText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: TEAL,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.6,
+  },
+
+  // ── HERO
+  hero: {
+    alignItems: 'center',
+    gap: 14,
+    paddingTop: 6,
+  },
+  logoStage: {
+    width: 132,
+    height: 132,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  logoOuterGlow: {
+    position: 'absolute',
+    width: 168,
+    height: 168,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,184,0,0.10)',
+  },
+  logoInnerGlow: {
+    position: 'absolute',
+    width: 144,
+    height: 144,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,184,0,0.18)',
+  },
+  logoFrame: {
+    width: 116,
+    height: 116,
+    borderRadius: 24,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: AMBER_DIM,
   },
   logoImage: {
-    width: 108,
-    height: 108,
-    borderRadius: 22,
-    borderWidth: 2,
-    borderColor: 'rgba(255,184,0,0.35)',
+    width: '100%',
+    height: '100%',
   },
-  title: {
+  logoCorner: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderColor: AMBER,
+  },
+  logoCornerTL: { top: -3, left: -3, borderTopWidth: 2, borderLeftWidth: 2 },
+  logoCornerTR: { top: -3, right: -3, borderTopWidth: 2, borderRightWidth: 2 },
+  logoCornerBL: { bottom: -3, left: -3, borderBottomWidth: 2, borderLeftWidth: 2 },
+  logoCornerBR: { bottom: -3, right: -3, borderBottomWidth: 2, borderRightWidth: 2 },
+
+  titleStack: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  titleSideLine: {
+    width: 26,
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: AMBER,
+    shadowColor: AMBER,
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  titleEmpire: {
     fontFamily: 'PressStart2P',
     fontSize: 22,
+    color: INK,
+    letterSpacing: 5,
+    textShadowColor: 'rgba(255,255,255,0.25)',
+    textShadowRadius: 10,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  titleConnector: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM,
+    fontSize: 11,
+    letterSpacing: 6,
+    marginVertical: 4,
+  },
+  titleStar: {
     color: AMBER,
-    textAlign: 'center',
-    lineHeight: 36,
-    letterSpacing: 3,
-    textShadowColor: 'rgba(255,184,0,0.4)',
-    textShadowRadius: 12,
+    fontSize: 16,
+    fontWeight: '900',
+    textShadowColor: AMBER_D,
+    textShadowRadius: 8,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  titleBits: {
+    fontFamily: 'PressStart2P',
+    fontSize: 30,
+    color: AMBER,
+    letterSpacing: 8,
+    textShadowColor: 'rgba(255,184,0,0.55)',
+    textShadowRadius: 14,
     textShadowOffset: { width: 0, height: 0 },
   },
   tagline: {
-    fontFamily: 'PressStart2P',
-    fontSize: 8,
-    color: 'rgba(245,245,245,0.45)',
-    textAlign: 'center',
-    lineHeight: 14,
-    letterSpacing: 1.5,
-  },
-
-  // ── Rank section
-  rankSection: {
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    backgroundColor: 'rgba(10,10,10,0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,184,0,0.18)',
-    borderRadius: 8,
-  },
-  rankLabel: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM_HI,
     fontSize: 11,
-    color: DIM,
     letterSpacing: 4,
-  },
-  rankTitle: {
-    fontFamily: 'PressStart2P',
-    fontSize: 36,
-    color: AMBER,
-    letterSpacing: 6,
-    textAlign: 'center',
-    textShadowColor: 'rgba(255,184,0,0.55)',
-    textShadowRadius: 18,
-    textShadowOffset: { width: 0, height: 0 },
-    marginTop: 4,
-  },
-  rankLevel: {
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 12,
-    color: 'rgba(245,245,245,0.35)',
-    letterSpacing: 3,
     marginTop: 2,
   },
-  rankDivider: {
-    width: 48,
+
+  // ── PLAYER CARD
+  playerCard: {
+    backgroundColor: SURFACE,
+    borderRadius: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: HAIRLINE_HI,
+    gap: 14,
+    overflow: 'visible',
+  },
+  bracket: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderColor: AMBER,
+  },
+  bracketTL: { top: -1, left: -1, borderTopWidth: 2, borderLeftWidth: 2 },
+  bracketTR: { top: -1, right: -1, borderTopWidth: 2, borderRightWidth: 2 },
+  bracketBL: { bottom: -1, left: -1, borderBottomWidth: 2, borderLeftWidth: 2 },
+  bracketBR: { bottom: -1, right: -1, borderBottomWidth: 2, borderRightWidth: 2 },
+  bracketAmberTL: { top: -1, left: -1, borderTopWidth: 2, borderLeftWidth: 2, borderColor: AMBER },
+  bracketAmberTR: { top: -1, right: -1, borderTopWidth: 2, borderRightWidth: 2, borderColor: AMBER },
+  bracketAmberBL: { bottom: -1, left: -1, borderBottomWidth: 2, borderLeftWidth: 2, borderColor: AMBER },
+  bracketAmberBR: { bottom: -1, right: -1, borderBottomWidth: 2, borderRightWidth: 2, borderColor: AMBER },
+
+  playerHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  playerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,0,0.32)',
+    backgroundColor: 'rgba(255,184,0,0.06)',
+  },
+  playerBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: AMBER,
+  },
+  playerBadgeText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: AMBER,
+    fontSize: 9.5,
+    fontWeight: '900',
+    letterSpacing: 1.6,
+  },
+  versionTag: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM,
+    fontSize: 10,
+    letterSpacing: 1.4,
+  },
+
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingTop: 4,
+  },
+  statCol: {
+    flex: 1,
+    gap: 6,
+  },
+  statSep: {
+    width: 1,
+    height: 44,
+    backgroundColor: HAIRLINE,
+  },
+  statLabel: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM,
+    fontSize: 9.5,
+    letterSpacing: 2.2,
+    fontWeight: '900',
+  },
+  statRank: {
+    fontFamily: 'PressStart2P',
+    color: AMBER,
+    fontSize: 18,
+    letterSpacing: 3,
+    textShadowColor: 'rgba(255,184,0,0.55)',
+    textShadowRadius: 12,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  statLvl: {
+    fontFamily: 'PressStart2P',
+    color: '#fff',
+    fontSize: 22,
+    letterSpacing: 2,
+  },
+  lvlValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  lvlBars: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  lvlBlock: {
+    width: 6,
+    height: 14,
+    borderRadius: 1,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  lvlBlockOn: {
+    backgroundColor: AMBER,
+    shadowColor: AMBER,
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+  },
+
+  playerDivider: {
     height: 1,
-    backgroundColor: 'rgba(255,184,0,0.25)',
-    marginTop: 14,
-    marginBottom: 8,
+    backgroundColor: HAIRLINE,
+  },
+  emailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  emailGlyph: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,255,194,0.10)',
+    borderWidth: 1,
+    borderColor: TEAL_DIM,
+  },
+  emailGlyphText: {
+    color: TEAL,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  emailLabel: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM,
+    fontSize: 9,
+    letterSpacing: 2,
+    fontWeight: '900',
   },
   emailText: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 13,
-    color: DIM,
-    letterSpacing: 0.5,
-    textAlign: 'center',
+    color: '#EDEDF8',
+    letterSpacing: 0.4,
+    marginTop: 2,
   },
 
-  // ── CTA button
-  ctaGlow: {
+  // ── CTA Card
+  ctaWrap: {
+    marginTop: 4,
+  },
+  ctaCard: {
+    backgroundColor: SURFACE,
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,0,0.30)',
+    gap: 14,
+    overflow: 'hidden',
+  },
+  ctaCardGlow: {
+    position: 'absolute',
+    top: -60,
+    right: -50,
+    width: 220,
+    height: 220,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,184,0,0.10)',
+  },
+  ctaHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  readyChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0,255,194,0.32)',
+    backgroundColor: 'rgba(0,255,194,0.08)',
+  },
+  readyDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: TEAL,
+    shadowColor: TEAL,
+    shadowOpacity: 0.9,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  readyText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: TEAL,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.6,
+  },
+  ctaCoinTag: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: PURPLE,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+  },
+  ctaSubtitle: {
+    fontFamily: 'PressStart2P',
+    color: '#fff',
+    fontSize: 14,
+    letterSpacing: 2,
+    lineHeight: 22,
+    marginBottom: 4,
+  },
+  ctaGlowWrap: {
     shadowColor: AMBER,
     shadowOpacity: 0.55,
     shadowRadius: 22,
-    shadowOffset: { width: 0, height: 0 },
+    shadowOffset: { width: 0, height: 4 },
     elevation: 10,
+    borderRadius: 8,
   },
   ctaBtn: {
     backgroundColor: AMBER,
     borderWidth: 2,
     borderColor: AMBER_D,
-    borderRadius: 6,
+    borderRadius: 8,
     minHeight: 64,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 16,
+    overflow: 'hidden',
   },
-  ctaPressed: { opacity: 0.85 },
+  ctaPressed: { opacity: 0.85, transform: [{ translateY: 1 }] },
+  ctaBtnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  ctaArrowBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: 'rgba(11,11,11,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ctaArrow: {
+    color: AMBER,
+    fontSize: 12,
+    fontWeight: '900',
+  },
   ctaText: {
     fontFamily: 'PressStart2P',
     color: '#080808',
-    fontSize: 16,
+    fontSize: 15,
     letterSpacing: 2,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingTop: 2,
+  },
+  tagItem: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: DIM_HI,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  tagBullet: {
+    width: 3,
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: AMBER_DIM,
   },
 
   // ── Footer
   footer: {
     alignItems: 'center',
-    paddingTop: 4,
+    gap: 10,
+    paddingTop: 12,
+  },
+  chainPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: HAIRLINE_HI,
+    backgroundColor: 'rgba(15,15,15,0.85)',
+  },
+  chainGlyph: {
+    color: PURPLE,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  chainLabel: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: '#fff',
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 1.6,
+  },
+  chainSep: {
+    width: 3,
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: DIM,
+  },
+  chainNet: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: TEAL,
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 1.6,
   },
   footerText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
+
+  // ── Loader Overlay
   loaderOverlay: {
     ...FILL,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0,0,0,0.78)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
@@ -559,103 +1105,130 @@ const s = StyleSheet.create({
     width: '100%',
     maxWidth: 360,
     borderWidth: 1,
-    borderColor: 'rgba(255,184,0,0.28)',
-    borderRadius: 10,
-    backgroundColor: 'rgba(10,10,10,0.95)',
-    paddingVertical: 24,
-    paddingHorizontal: 20,
+    borderColor: 'rgba(255,184,0,0.32)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(8,8,8,0.97)',
+    paddingVertical: 26,
+    paddingHorizontal: 22,
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   loaderTitle: {
     fontFamily: 'PressStart2P',
     color: AMBER,
     fontSize: 10,
-    letterSpacing: 1.2,
+    letterSpacing: 1.4,
     textAlign: 'center',
     lineHeight: 16,
   },
   loaderSubtitle: {
     color: 'rgba(245,245,245,0.7)',
-    fontSize: 13,
+    fontSize: 12,
     letterSpacing: 0.5,
+    textAlign: 'center',
   },
+
+  // ── Modal
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(0,0,0,0.82)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 22,
   },
   modalCard: {
     width: '100%',
     maxWidth: 380,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: 'rgba(255,184,0,0.42)',
-    backgroundColor: 'rgba(5,5,5,0.96)',
+    borderColor: 'rgba(255,184,0,0.45)',
+    backgroundColor: 'rgba(6,6,6,0.97)',
     paddingHorizontal: 24,
-    paddingVertical: 26,
+    paddingVertical: 28,
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     shadowColor: AMBER,
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
     shadowOffset: { width: 0, height: 0 },
     elevation: 12,
   },
   modalBadge: {
     color: TEAL,
-    fontSize: 11,
-    letterSpacing: 2,
+    fontSize: 10,
+    letterSpacing: 2.2,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontWeight: '900',
   },
   modalTitle: {
     fontFamily: 'PressStart2P',
     color: AMBER,
-    fontSize: 20,
+    fontSize: 18,
     textAlign: 'center',
-    lineHeight: 30,
-    textShadowColor: 'rgba(255,184,0,0.4)',
-    textShadowRadius: 12,
+    lineHeight: 28,
+    letterSpacing: 2,
+    textShadowColor: 'rgba(255,184,0,0.5)',
+    textShadowRadius: 14,
     textShadowOffset: { width: 0, height: 0 },
   },
   modalSubTitle: {
-    color: 'rgba(245,245,245,0.75)',
-    fontSize: 14,
+    color: 'rgba(245,245,245,0.78)',
+    fontSize: 13,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
+    lineHeight: 18,
   },
   pointsWrap: {
     width: '100%',
     borderWidth: 1,
-    borderColor: 'rgba(0,255,194,0.28)',
-    borderRadius: 8,
+    borderColor: 'rgba(0,255,194,0.32)',
+    borderRadius: 10,
     backgroundColor: 'rgba(0,255,194,0.08)',
-    paddingVertical: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
     alignItems: 'center',
-    gap: 4,
-    marginBottom: 8,
+    gap: 6,
+    marginBottom: 6,
   },
   pointsLabel: {
-    color: 'rgba(245,245,245,0.65)',
-    fontSize: 11,
-    letterSpacing: 1.4,
+    color: 'rgba(245,245,245,0.7)',
+    fontSize: 10,
+    letterSpacing: 1.8,
+    fontWeight: '900',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   pointsValue: {
     color: TEAL,
     fontFamily: 'PressStart2P',
-    fontSize: 24,
-    textShadowColor: 'rgba(0,255,194,0.35)',
-    textShadowRadius: 10,
+    fontSize: 28,
+    letterSpacing: 2,
+    textShadowColor: 'rgba(0,255,194,0.4)',
+    textShadowRadius: 12,
     textShadowOffset: { width: 0, height: 0 },
+  },
+  pointsLineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  pointsLine: {
+    width: 32,
+    height: 1,
+    backgroundColor: TEAL_DIM,
+  },
+  pointsLineText: {
+    color: TEAL,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.6,
   },
   modalBtn: {
     marginTop: 6,
     width: '100%',
-    minHeight: 54,
-    borderRadius: 6,
+    minHeight: 56,
+    borderRadius: 8,
     borderWidth: 2,
     borderColor: AMBER_D,
     backgroundColor: AMBER,
@@ -664,11 +1237,12 @@ const s = StyleSheet.create({
   },
   modalBtnPressed: {
     opacity: 0.85,
+    transform: [{ translateY: 1 }],
   },
   modalBtnText: {
     color: '#0b0b0b',
     fontFamily: 'PressStart2P',
     fontSize: 12,
-    letterSpacing: 1.2,
+    letterSpacing: 1.6,
   },
 });

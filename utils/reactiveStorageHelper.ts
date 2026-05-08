@@ -6,6 +6,7 @@ const REACTIVE_USER_KEY = 'eob.reactive.user';
 const REACTIVE_PROFILE_KEY = 'eob.reactive.profile';
 const REACTIVE_STREAM_URL_KEY = 'eob.reactive.streamUrl';
 const REACTIVE_ENABLED_KEY = 'eob.reactive.enabled';
+const REACTIVE_SESSION_ID_KEY = 'eob.reactive.sessionId';
 
 export interface ReactiveVorldUser {
   id?: string;
@@ -88,6 +89,11 @@ export const getReactiveEnabled = async (): Promise<boolean> => {
 };
 export const clearReactiveEnabled = () => deleteItem(REACTIVE_ENABLED_KEY);
 
+export const saveReactiveSessionId = (sessionId: string) =>
+  setItem(REACTIVE_SESSION_ID_KEY, sessionId);
+export const getReactiveSessionId = () => getItem(REACTIVE_SESSION_ID_KEY);
+export const clearReactiveSessionId = () => deleteItem(REACTIVE_SESSION_ID_KEY);
+
 export interface ReactiveSessionPayload {
   accessToken: string;
   refreshToken: string;
@@ -109,18 +115,20 @@ export interface ReactiveSessionSnapshot {
   profile: ReactiveVorldProfile | null;
   streamUrl: string | null;
   enabled: boolean;
+  sessionId: string | null;
 }
 
 export const loadReactiveSnapshot = async (): Promise<ReactiveSessionSnapshot> => {
-  const [accessToken, refreshToken, user, profile, streamUrl, enabled] = await Promise.all([
+  const [accessToken, refreshToken, user, profile, streamUrl, enabled, sessionId] = await Promise.all([
     getReactiveAccessToken(),
     getReactiveRefreshToken(),
     getReactiveUser(),
     getReactiveProfile(),
     getReactiveStreamUrl(),
     getReactiveEnabled(),
+    getReactiveSessionId(),
   ]);
-  return { accessToken, refreshToken, user, profile, streamUrl, enabled };
+  return { accessToken, refreshToken, user, profile, streamUrl, enabled, sessionId };
 };
 
 /** Clears the auth side of the reactive session (tokens, user, profile, enabled flag) but keeps the stream URL on disk. */
@@ -131,6 +139,7 @@ export const clearReactiveSessionKeepStreamUrl = async () => {
     clearReactiveUser(),
     clearReactiveProfile(),
     clearReactiveEnabled(),
+    clearReactiveSessionId(),
   ]);
 };
 
@@ -143,5 +152,6 @@ export const clearReactiveAll = async () => {
     clearReactiveProfile(),
     clearReactiveStreamUrl(),
     clearReactiveEnabled(),
+    clearReactiveSessionId(),
   ]);
 };

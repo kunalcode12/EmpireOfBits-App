@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEmbeddedSolanaWallet, usePrivy } from '@privy-io/expo';
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import * as Font from 'expo-font';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,10 +22,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getUserPoints, registerOrLogin, sellPoints, updateUserPoints } from '../api/authApi';
+import { registerOrLogin, sellPoints } from '../api/authApi';
 import { getUserProfile, requestOtp, verifyOtp } from '../lib/vorldAuth';
 import { SOLANA_RPC_URL } from '../constants/solana';
 import { useAuth } from '../store/AuthContext';
+import { usePoints } from '../store/PointsContext';
 import { getPrivyEmail } from '../utils/privyUser';
 import {
   clearReactiveSessionKeepStreamUrl,
@@ -848,8 +849,7 @@ export function ArcadeCenterScreen() {
   const reactiveAccessTokenRef = useRef<string | null>(null);
   const reactiveHydratedRef = useRef(false);
   const twitchValid = TWITCH_URL_REGEX.test(twitch.trim());
-  const [points, setPoints] = useState<number | null>(null);
-  const [pointsLoading, setPointsLoading] = useState(false);
+  const { points, pointsLoading, refreshPoints, applyPointsDelta, setPoints } = usePoints();
   const [chessLoading, setChessLoading] = useState(false);
   const [chessEntryModalOpen, setChessEntryModalOpen] = useState(false);
   const [chessEntryCharging, setChessEntryCharging] = useState(false);
@@ -870,26 +870,7 @@ export function ArcadeCenterScreen() {
   const tradeBusyRef = useRef(false);
   const triggerTradeRef = useRef<() => void>(() => {});
 
-  const fetchPoints = async () => {
-    console.log('fetchPoints', auth.user);
-    if (!auth.user) {
-      setPoints(null);
-      return;
-    }
-    setPointsLoading(true);
-    try {
-      const userPoints = await getUserPoints();
-      setPoints(userPoints);
-    } catch (error) {
-      console.log('Points fetch failed:', error);
-    } finally {
-      setPointsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void fetchPoints();
-  }, [auth.user?.id]);
+  const fetchPoints = refreshPoints;
 
   // Keep a live ref to the auth context so the callback doesn't have to take
   // `auth` as a dependency. Re-creating the callback whenever the context
@@ -961,6 +942,41 @@ export function ArcadeCenterScreen() {
       }
     })();
   }, []);
+
+  // Re-hydrate from storage whenever this screen regains focus, so state
+  // toggled from ProfileScreen (or anywhere else writing to the same
+  // reactiveStorageHelper keys) shows up here without needing a remount.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        try {
+          const snap = await loadReactiveSnapshot();
+          if (cancelled) return;
+          const sessionLive = Boolean(snap.enabled && snap.accessToken && snap.user);
+          if (sessionLive && !reactiveAccessTokenRef.current) {
+            reactiveAccessTokenRef.current = snap.accessToken;
+            setReactiveAccessToken(snap.accessToken);
+            if (snap.user) setReactiveVorldUser(snap.user);
+            if (snap.profile) setReactiveProfile(snap.profile);
+            if (snap.streamUrl) setTwitch(snap.streamUrl);
+            setReactiveOn(true);
+          } else if (!sessionLive && reactiveAccessTokenRef.current) {
+            reactiveAccessTokenRef.current = null;
+            setReactiveAccessToken(null);
+            setReactiveVorldUser(null);
+            setReactiveProfile(null);
+            setReactiveOn(false);
+          }
+        } catch {
+          // ignore — non-fatal
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
 
   const resetReactivePanelInputs = () => {
     setOtp('');
@@ -1110,12 +1126,6 @@ export function ArcadeCenterScreen() {
       if (finished) setTradeDrawerOpen(false);
     });
   };
-
-  const applyPointsDelta = useCallback(async (delta: number) => {
-    const response = await updateUserPoints(delta);
-    setPoints(response.points);
-    return response.points;
-  }, []);
 
   const handleBuyPoints = useCallback(async () => {
     if (tradeBusy) return;

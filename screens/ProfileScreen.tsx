@@ -8,7 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as Font from 'expo-font';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -28,11 +28,40 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   getUserPoints,
   getUserProfile,
+  sellPoints,
   type ProfileUpdatePayload,
   updateUserProfile,
 } from '../api/authApi';
+import {
+  Connection,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from '@solana/web3.js';
+import { SOLANA_RPC_URL } from '../constants/solana';
+import { ReactiveIdentityPanel } from '../components/ReactiveIdentityPanel';
 import { useAuth } from '../store/AuthContext';
+import { usePoints } from '../store/PointsContext';
 import { getPrivyDisplayName, getPrivyEmail } from '../utils/privyUser';
+import {
+  clearReactiveSessionKeepStreamUrl,
+  loadReactiveSnapshot,
+} from '../utils/reactiveStorageHelper';
+import * as SecureStore from 'expo-secure-store';
+
+const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
+const TRADE_POINTS = 100;
+const TRADE_SOL = 0.001;
+
+// ─── Reactive accents ─────────────────────────────────────────────────────────
+const PINK = '#FF006E';
+
+// ─── Avatar emojis (cycle on tap) ─────────────────────────────────────────────
+const AVATAR_EMOJIS = ['🎮', '🕹️', '♟️', '🏆', '⚔️', '👾', '🎯', '🚀', '⭐', '🔮'];
+const AVATAR_INDEX_KEY = 'eob.profile.avatarIndex';
+
+type ProfileTab = 'solana' | 'games' | 'reactive';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -415,12 +444,85 @@ export default function ProfileScreen() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [pointsLoading, setPointsLoading] = useState(false);
+  const [historyViewportHeight, setHistoryViewportHeight] = useState(1);
+  const [historyContentHeight, setHistoryContentHeight] = useState(1);
+  const [historyScrollY, setHistoryScrollY] = useState(0);
   const [profileData, setProfileData] = useState<Awaited<ReturnType<typeof getUserProfile>> | null>(null);
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editChessLevel, setEditChessLevel] = useState<'BEGINNER' | 'INTERMEDIATE' | 'PRO'>('BEGINNER');
   const [editPassword, setEditPassword] = useState('');
   const [tradeMode, setTradeMode] = useState<'BUY' | 'SELL' | null>(null);
+  const [tradeBusy, setTradeBusy] = useState(false);
+  const {
+    points: ctxPoints,
+    applyPointsDelta: ctxApplyPointsDelta,
+    setPoints: ctxSetPoints,
+  } = usePoints();
+  const connectionRef = useRef(new Connection(SOLANA_RPC_URL, 'confirmed'));
+
+  // ─── Tabs + reactive theming + avatar emoji ─────────────────────────────────
+  const [activeTab, setActiveTab] = useState<ProfileTab>('solana');
+  const [reactiveActive, setReactiveActive] = useState(false);
+  const [avatarIndex, setAvatarIndex] = useState(0);
+  const tabIndicator = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(tabIndicator, {
+      toValue: activeTab === 'solana' ? 0 : activeTab === 'games' ? 1 : 2,
+      duration: 220,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [activeTab, tabIndicator]);
+
+  const refreshReactiveFlag = useCallback(async () => {
+    try {
+      const snap = await loadReactiveSnapshot();
+      setReactiveActive(Boolean(snap.enabled && snap.accessToken && snap.user));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshReactiveFlag();
+  }, [refreshReactiveFlag]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        if (await SecureStore.isAvailableAsync()) {
+          const stored = await SecureStore.getItemAsync(AVATAR_INDEX_KEY);
+          if (stored !== null) {
+            const parsed = parseInt(stored, 10);
+            if (!Number.isNaN(parsed) && parsed >= 0 && parsed < AVATAR_EMOJIS.length) {
+              setAvatarIndex(parsed);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
+
+  const cycleAvatar = useCallback(async () => {
+    Haptics.selectionAsync().catch(() => undefined);
+    setAvatarIndex((prev) => {
+      const next = (prev + 1) % AVATAR_EMOJIS.length;
+      void (async () => {
+        try {
+          if (await SecureStore.isAvailableAsync()) {
+            await SecureStore.setItemAsync(AVATAR_INDEX_KEY, String(next));
+          }
+        } catch {
+          // ignore
+        }
+      })();
+      return next;
+    });
+  }, []);
 
   const pointsSlide = useRef(new Animated.Value(SCREEN_WIDTH)).current;
   const editSlide = useRef(new Animated.Value(SCREEN_WIDTH)).current;
@@ -448,6 +550,28 @@ export default function ProfileScreen() {
   const truncatedAddress = walletAddress
     ? `${walletAddress.slice(0, 8)}…${walletAddress.slice(-6)}`
     : null;
+
+  const gameHistory = useMemo(() => {
+    const userId = profileData?.user?.id;
+    const roomGames = ((profileData as any)?.allGames?.roomGames ?? []) as Array<any>;
+
+    return roomGames.slice(0, 30).map((game) => {
+      const didWin = userId != null && game?.winnerId === userId;
+      const didLose = userId != null && game?.loserId === userId;
+      const result: 'WON' | 'LOST' | 'DRAW' = game?.draw ? 'DRAW' : didWin ? 'WON' : didLose ? 'LOST' : 'DRAW';
+      const opponentName =
+        game?.opponentName ??
+        (didWin ? game?.loser?.name : game?.winner?.name) ??
+        'Unknown Opponent';
+
+      return {
+        id: String(game?.id ?? game?.roomId ?? Math.random()),
+        opponentName,
+        result,
+        reason: String(game?.winReason ?? game?.loseReason ?? game?.status ?? '--'),
+      };
+    });
+  }, [profileData]);
 
   const copyAddress = useCallback(async () => {
     if (!walletAddress) return;
@@ -510,12 +634,157 @@ export default function ProfileScreen() {
     try {
       const latestPoints = await getUserPoints();
       setProfileData((prev) => (prev ? { ...prev, user: { ...prev.user, points: latestPoints } } : prev));
+      ctxSetPoints(latestPoints);
     } catch (error) {
       Alert.alert('Points', error instanceof Error ? error.message : 'Unable to refresh points');
     } finally {
       setPointsLoading(false);
     }
-  }, [auth.user]);
+  }, [auth.user, ctxSetPoints]);
+
+  // Keep the locally-displayed profileData.user.points in sync with the
+  // shared PointsContext so changes made elsewhere (e.g. ArcadeCenter chess
+  // entry charge, buy/sell on the arcade tab) reflect here too.
+  // Track the last value we wrote so we never re-issue the same write.
+  const lastSyncedPointsRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (ctxPoints === null || ctxPoints === undefined) return;
+    if (lastSyncedPointsRef.current === ctxPoints) return;
+    lastSyncedPointsRef.current = ctxPoints;
+    setProfileData((prev) => {
+      if (!prev) return prev;
+      if (prev.user.points === ctxPoints) return prev;
+      return { ...prev, user: { ...prev.user, points: ctxPoints } };
+    });
+  }, [ctxPoints]);
+
+  const handleBuyPoints = useCallback(async () => {
+    if (tradeBusy) return;
+    const wallet =
+      solanaWallet.status === 'connected' && solanaWallet.wallets?.[0]
+        ? solanaWallet.wallets[0]
+        : null;
+    if (!wallet) {
+      Alert.alert('Buy points', 'Connect your embedded Privy Solana wallet first.');
+      return;
+    }
+    if (!auth.user) {
+      Alert.alert('Buy points', 'Please wait until your chess account is ready.');
+      return;
+    }
+    const wAddress = wallet.address;
+    setTradeMode('BUY');
+    Alert.alert(
+      'Confirm purchase',
+      `Send ${TRADE_SOL} SOL for ${TRADE_POINTS} points?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            setTradeBusy(true);
+            try {
+              const fromPubkey = new PublicKey(wAddress);
+              const toPubkey = new PublicKey(TREASURY_WALLET);
+              const lamports = Math.round(TRADE_SOL * LAMPORTS_PER_SOL);
+              const { blockhash } = await connectionRef.current.getLatestBlockhash('confirmed');
+              const tx = new Transaction({
+                recentBlockhash: blockhash,
+                feePayer: fromPubkey,
+              }).add(
+                SystemProgram.transfer({ fromPubkey, toPubkey, lamports }),
+              );
+              const provider = await wallet.getProvider();
+              const txResult = (await provider.request({
+                method: 'signAndSendTransaction',
+                params: { transaction: tx, connection: connectionRef.current },
+              })) as { signature?: string };
+
+              const updatedPoints = await ctxApplyPointsDelta(TRADE_POINTS);
+              setProfileData((prev) =>
+                prev ? { ...prev, user: { ...prev.user, points: updatedPoints } } : prev,
+              );
+              Alert.alert(
+                'Buy successful',
+                `Sent ${TRADE_SOL} SOL\n+${TRADE_POINTS} points\nBalance: ${updatedPoints}${
+                  txResult.signature ? `\nTx: ${txResult.signature.slice(0, 20)}...` : ''
+                }`,
+              );
+            } catch (error) {
+              Alert.alert(
+                'Buy failed',
+                error instanceof Error ? error.message : 'Unable to complete purchase.',
+              );
+            } finally {
+              setTradeBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [auth.user, ctxApplyPointsDelta, solanaWallet, tradeBusy]);
+
+  const handleSellPoints = useCallback(async () => {
+    if (tradeBusy) return;
+    const wallet =
+      solanaWallet.status === 'connected' && solanaWallet.wallets?.[0]
+        ? solanaWallet.wallets[0]
+        : null;
+    if (!wallet) {
+      Alert.alert('Sell points', 'Connect your embedded Privy Solana wallet first.');
+      return;
+    }
+    if (!auth.user) {
+      Alert.alert('Sell points', 'Please wait until your chess account is ready.');
+      return;
+    }
+    const currentPoints = ctxPoints ?? profileData?.user.points ?? 0;
+    if (currentPoints < TRADE_POINTS) {
+      Alert.alert('Sell points', `You need at least ${TRADE_POINTS} points to sell.`);
+      return;
+    }
+    const wAddress = wallet.address;
+    setTradeMode('SELL');
+    Alert.alert(
+      'Confirm sell',
+      `Redeem ${TRADE_POINTS} points for ${TRADE_SOL} SOL?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            setTradeBusy(true);
+            try {
+              const provider = await wallet.getProvider();
+              await provider.request({
+                method: 'signMessage',
+                params: {
+                  message: `Sell confirmation: redeem ${TRADE_POINTS} points for ${TRADE_SOL} SOL on devnet`,
+                },
+              });
+              const sellResponse = await sellPoints(wAddress);
+              const updatedPoints = sellResponse.points;
+              ctxSetPoints(updatedPoints);
+              setProfileData((prev) =>
+                prev ? { ...prev, user: { ...prev.user, points: updatedPoints } } : prev,
+              );
+              Alert.alert(
+                'Sell successful',
+                `${sellResponse.payoutSol} SOL sent from treasury\n-${sellResponse.pointsSpent} points\nBalance: ${updatedPoints}\nTx: ${sellResponse.txSignature.slice(0, 20)}...`,
+              );
+            } catch (error) {
+              Alert.alert(
+                'Sell failed',
+                error instanceof Error ? error.message : 'Unable to complete sell flow.',
+              );
+            } finally {
+              setTradeBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [auth.user, ctxPoints, ctxApplyPointsDelta, ctxSetPoints, profileData?.user.points, solanaWallet, tradeBusy]);
 
   const saveProfileChanges = useCallback(async () => {
     if (!auth.user) return;
@@ -558,6 +827,14 @@ export default function ProfileScreen() {
         style: 'destructive',
         onPress: async () => {
           setLogoutBusy(true);
+          if (reactiveActive) {
+            try {
+              await clearReactiveSessionKeepStreamUrl();
+              setReactiveActive(false);
+            } catch (err) {
+              console.log('Reactive disable on logout failed:', err);
+            }
+          }
           try {
             await auth.logout();
           } catch {
@@ -574,7 +851,7 @@ export default function ProfileScreen() {
         },
       },
     ]);
-  }, [auth, logout]);
+  }, [auth, logout, reactiveActive]);
 
   if (!fontsLoaded || !isReady) {
     return (
@@ -604,168 +881,264 @@ export default function ProfileScreen() {
         </View>
         <Text style={ps.pageHeaderRunes}>ᛖ ᛗ ᛈ ᛁ ᚱ ᛖ   ✦   ᛟ ᚠ   ✦   ᛒ ᛁ ᛏ ᛊ</Text>
 
-        {/* ── RANK CARD ────────────────────────────────────── */}
-        <View style={ps.rankCard}>
-          <View style={[ps.rankAccentBar, { backgroundColor: AMBER }]} />
-          <View style={ps.rankCardInner}>
-            <Text style={ps.rankLabel}>◈ RANK ◈</Text>
-            <Text style={ps.rankTitle}>{profileData?.user.chessLevel ?? 'ROOKIE'}</Text>
-            <Text style={ps.rankLevel}>{profileData?.totalTimePlayed ?? '0h 0m'}</Text>
-          </View>
-        </View>
-
-        {/* ── IDENTITY CARD ────────────────────────────────── */}
-        <View style={[ps.card, { borderColor: 'rgba(34,211,238,0.3)', shadowColor: CYAN }]}>
-          <View style={[ps.cardLeftBar, { backgroundColor: CYAN }]} />
-          <View style={ps.cardInner}>
-            <View style={ps.cardHeader}>
-              <MaterialCommunityIcons name="account-circle-outline" size={15} color={CYAN} />
-              <Text style={[ps.cardTitle, { color: CYAN }]}>IDENTITY</Text>
-            </View>
-            {displayName ? <ProfileRow label="NAME" value={displayName} /> : null}
-            {email ? <ProfileRow label="EMAIL" value={email} mono /> : null}
-            {user?.id ? (
-              <ProfileRow label="ID" value={`${user.id.slice(0, 20)}…`} mono dim />
-            ) : null}
-            <ProfileRow
-              label="CHESS USER"
-              value={profileData?.user.name ?? auth.user?.username ?? '--'}
-            />
-          </View>
-        </View>
-
-        {/* ── BACKEND PROFILE STATUS ───────────────────────── */}
-        <View style={[ps.card, { borderColor: 'rgba(255,255,255,0.2)', shadowColor: '#999' }]}>
-          <View style={[ps.cardLeftBar, { backgroundColor: '#d4d4d4' }]} />
-          <View style={ps.cardInner}>
-            <View style={ps.cardHeader}>
-              <MaterialCommunityIcons name="account-box-outline" size={15} color="#d4d4d4" />
-              <Text style={[ps.cardTitle, { color: '#d4d4d4' }]}>CHESS PROFILE</Text>
-            </View>
-            {profileLoading ? (
-              <ActivityIndicator size="small" color={AMBER} />
-            ) : (
-              <>
-                <ProfileRow label="POINTS" value={`${profileData?.user.points ?? '--'}`} highlight={AMBER} />
-                <ProfileRow label="LEVEL" value={profileData?.user.chessLevel ?? '--'} />
-                <ProfileRow label="TIME PLAYED" value={profileData?.totalTimePlayed ?? '--'} />
-              </>
+        {/* ── HERO — AVATAR · NAME · STATUS ────────────────────────────────── */}
+        <View
+          style={[
+            ps.heroRow,
+            reactiveActive ? ps.heroRowReactive : null,
+          ]}
+        >
+          <Pressable onPress={() => void cycleAvatar()} style={ps.heroAvatarWrap}>
+            {({ pressed: p }) => (
+              <View
+                style={[
+                  ps.heroAvatar,
+                  reactiveActive ? ps.heroAvatarReactive : null,
+                  p && { opacity: 0.85, transform: [{ scale: 0.96 }] },
+                ]}
+              >
+                <Text style={ps.heroAvatarEmoji}>{AVATAR_EMOJIS[avatarIndex]}</Text>
+                <View style={[ps.heroAvatarEditBadge, reactiveActive ? ps.heroAvatarEditBadgeReactive : null]}>
+                  <MaterialCommunityIcons
+                    name="pencil"
+                    size={9}
+                    color={reactiveActive ? '#fff' : '#0a0a0a'}
+                  />
+                </View>
+              </View>
             )}
-            {profileError ? <Text style={ps.errorText}>{profileError}</Text> : null}
+          </Pressable>
+          <View style={ps.heroInfo}>
+            <Text style={ps.heroEyebrow}>SIGNED IN AS</Text>
+            <Text style={ps.heroName} numberOfLines={1}>
+              {profileData?.user.name ?? displayName ?? auth.user?.username ?? 'Player'}
+            </Text>
+            <Text style={ps.heroEmail} numberOfLines={1}>
+              {email ?? profileData?.user.email ?? '--'}
+            </Text>
+            <View style={ps.heroChipRow}>
+              <View style={[ps.heroChip, { borderColor: 'rgba(255,184,0,0.45)' }]}>
+                <MaterialCommunityIcons name="star-four-points-outline" size={10} color={AMBER} />
+                <Text style={[ps.heroChipText, { color: AMBER }]}>
+                  {(profileData?.user.chessLevel ?? 'BEGINNER').toUpperCase()}
+                </Text>
+              </View>
+              {reactiveActive ? (
+                <View style={[ps.heroChip, { borderColor: 'rgba(255,0,110,0.55)', backgroundColor: 'rgba(255,0,110,0.10)' }]}>
+                  <View style={ps.heroChipDot} />
+                  <Text style={[ps.heroChipText, { color: PINK }]}>REACTIVE</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
 
-        {/* ── STATS CARD ───────────────────────────────────── */}
-        <View style={[ps.card, { borderColor: 'rgba(232,121,249,0.35)', shadowColor: MAGENTA }]}>
-          <View style={[ps.cardLeftBar, { backgroundColor: MAGENTA }]} />
-          <View style={ps.cardInner}>
-            <View style={ps.cardHeader}>
-              <MaterialCommunityIcons name="chart-box-outline" size={15} color={MAGENTA} />
-              <Text style={[ps.cardTitle, { color: MAGENTA }]}>GAME STATS</Text>
-            </View>
-            <ProfileRow label="ROOM" value={`${profileData?.stats.room.won ?? 0}W / ${profileData?.stats.room.lost ?? 0}L / ${profileData?.stats.room.drawn ?? 0}D`} />
-            <ProfileRow label="COMPUTER" value={`${profileData?.stats.computer.won ?? 0}W / ${profileData?.stats.computer.lost ?? 0}L / ${profileData?.stats.computer.drawn ?? 0}D`} />
-            <ProfileRow label="GUEST" value={`${profileData?.stats.guest.won ?? 0}W / ${profileData?.stats.guest.lost ?? 0}L / ${profileData?.stats.guest.drawn ?? 0}D`} />
-          </View>
+        {/* ── TABS ──────────────────────────────────────────────────────────── */}
+        <View style={ps.tabBar}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              ps.tabIndicator,
+              {
+                left: tabIndicator.interpolate({
+                  inputRange: [0, 1, 2],
+                  outputRange: ['1%', '34%', '67%'],
+                }),
+                backgroundColor:
+                  activeTab === 'reactive'
+                    ? 'rgba(255,0,110,0.18)'
+                    : activeTab === 'games'
+                      ? 'rgba(255,184,0,0.16)'
+                      : 'rgba(34,211,238,0.16)',
+                borderColor:
+                  activeTab === 'reactive'
+                    ? PINK
+                    : activeTab === 'games'
+                      ? AMBER
+                      : CYAN,
+              },
+            ]}
+          />
+          <Pressable style={ps.tabBtn} onPress={() => setActiveTab('solana')}>
+            <MaterialCommunityIcons
+              name="wallet-outline"
+              size={14}
+              color={activeTab === 'solana' ? CYAN : DIM}
+            />
+            <Text style={[ps.tabText, activeTab === 'solana' && { color: CYAN }]}>
+              SOLANA
+            </Text>
+          </Pressable>
+          <Pressable style={ps.tabBtn} onPress={() => setActiveTab('games')}>
+            <MaterialCommunityIcons
+              name="chess-king"
+              size={14}
+              color={activeTab === 'games' ? AMBER : DIM}
+            />
+            <Text style={[ps.tabText, activeTab === 'games' && { color: AMBER }]}>
+              GAME
+            </Text>
+          </Pressable>
+          <Pressable style={ps.tabBtn} onPress={() => setActiveTab('reactive')}>
+            <MaterialCommunityIcons
+              name="broadcast"
+              size={14}
+              color={activeTab === 'reactive' ? PINK : DIM}
+            />
+            <Text style={[ps.tabText, activeTab === 'reactive' && { color: PINK }]}>
+              REACTIVE
+            </Text>
+            {reactiveActive ? <View style={ps.tabLiveDot} /> : null}
+          </Pressable>
         </View>
 
-        {/* ── WALLET CARD ──────────────────────────────────── */}
-        <View style={[ps.card, { borderColor: 'rgba(255,184,0,0.3)', shadowColor: AMBER }]}>
-          <View style={[ps.cardLeftBar, { backgroundColor: AMBER }]} />
-          <View style={ps.cardInner}>
-            <View style={ps.cardHeader}>
-              <MaterialCommunityIcons name="wallet-outline" size={15} color={AMBER} />
-              <Text style={[ps.cardTitle, { color: AMBER }]}>SOLANA WALLET</Text>
+        {/* ── REACTIVE TAB ─────────────────────────────────── */}
+        {activeTab === 'reactive' ? (
+          <ReactiveIdentityPanel onChange={() => void refreshReactiveFlag()} />
+        ) : null}
+
+        {/* ── SOLANA TAB CONTENT ───────────────────────────── */}
+        {activeTab === 'solana' ? (
+          <>
+            <View style={ps.profileShell}>
+              <View style={ps.profileTopRow}>
+                <View style={ps.profileSquareAvatar}>
+                  <Text style={ps.profileSquareAvatarText}>{AVATAR_EMOJIS[avatarIndex]}</Text>
+                </View>
+                <View style={ps.profileTopInfo}>
+                  <Text style={ps.profileMainName} numberOfLines={1}>
+                    {profileData?.user.name ?? displayName ?? auth.user?.username ?? 'Player'}
+                  </Text>
+                  <Text style={ps.profileSubName} numberOfLines={1}>
+                    {email ?? profileData?.user.email ?? '--'}
+                  </Text>
+                  <Text style={ps.profileJoined}>Wallet: {truncatedAddress ?? 'Not connected'}</Text>
+                </View>
+              </View>
             </View>
-            <ProfileRow label="STATUS" value={solanaWallet.status} highlight={CYAN} />
-            {truncatedAddress ? (
-              <>
-                <ProfileRow label="ADDRESS" value={truncatedAddress} mono />
-                <Pressable onPress={copyAddress} style={ps.copyBtnWrap}>
-                  {({ pressed: p }) => (
-                    <View style={[ps.copyBtn, p && { opacity: 0.75 }]}>
-                      <MaterialCommunityIcons
-                        name={copyDone ? 'check-circle' : 'content-copy'}
-                        size={14}
-                        color={copyDone ? '#4ade80' : AMBER}
-                      />
-                      <Text style={[ps.copyBtnText, copyDone && { color: '#4ade80' }]}>
-                        {copyDone ? 'COPIED!' : 'COPY ADDRESS'}
+
+            <View style={ps.solanaActionRow}>
+              <Pressable style={ps.solanaActionBtn} onPress={copyAddress}>
+                <MaterialCommunityIcons name={copyDone ? 'check-circle' : 'content-copy'} size={16} color={CYAN} />
+                <Text style={ps.solanaActionText}>{copyDone ? 'COPIED' : 'COPY'}</Text>
+              </Pressable>
+              <Pressable
+                style={ps.solanaActionBtn}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  setSignPanelOpen(true);
+                }}
+              >
+                <MaterialCommunityIcons name="shield-key-outline" size={16} color={AMBER} />
+                <Text style={ps.solanaActionText}>SIGN</Text>
+              </Pressable>
+              <Pressable style={ps.solanaActionBtn} onPress={() => setPointsPanelOpen(true)}>
+                <MaterialCommunityIcons name="wallet-plus-outline" size={16} color={PINK} />
+                <Text style={ps.solanaActionText}>POINTS</Text>
+              </Pressable>
+            </View>
+          </>
+        ) : null}
+
+        {/* ── GAME TAB CONTENT ─────────────────────────────── */}
+        {activeTab === 'games' ? (
+          <>
+            <View style={ps.gameStatsHeader}>
+              <Text style={ps.gameStatsTitle}>Stats</Text>
+            </View>
+            <View style={ps.ratingBox}>
+              <Text style={ps.ratingBoxValue}>{profileData?.user.rating ?? '--'}</Text>
+              <Text style={ps.ratingBoxLabel}>Rating</Text>
+            </View>
+
+            <View style={ps.historyHeader}>
+              <Text style={ps.historyTitle}>Game History</Text>
+              <Text style={ps.historyCount}>{gameHistory.length}</Text>
+            </View>
+
+            <View style={ps.historyList}>
+              {profileLoading ? (
+                <ActivityIndicator size="small" color={AMBER} />
+              ) : gameHistory.length === 0 ? (
+                <Text style={ps.historyEmpty}>No game history found.</Text>
+              ) : (
+                <>
+                  <ScrollView
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator
+                    persistentScrollbar
+                    indicatorStyle="white"
+                    style={ps.historyScroll}
+                    onLayout={(event) => setHistoryViewportHeight(event.nativeEvent.layout.height)}
+                    onContentSizeChange={(_, height) => setHistoryContentHeight(height)}
+                    onScroll={(event) => setHistoryScrollY(event.nativeEvent.contentOffset.y)}
+                    scrollEventThrottle={16}
+                  >
+                  {gameHistory.map((entry) => (
+                    <View key={entry.id} style={ps.historyItem}>
+                      <View style={ps.historyItemLeft}>
+                        <MaterialCommunityIcons
+                          name={entry.result === 'WON' ? 'trophy-outline' : entry.result === 'LOST' ? 'close-octagon-outline' : 'minus-circle-outline'}
+                          size={16}
+                          color={entry.result === 'WON' ? '#22c55e' : entry.result === 'LOST' ? '#ef4444' : AMBER}
+                        />
+                        <Text style={ps.historyOpponent} numberOfLines={1}>{entry.opponentName}</Text>
+                      </View>
+                      <Text style={[ps.historyResult, entry.result === 'WON' ? ps.resultWin : entry.result === 'LOST' ? ps.resultLoss : ps.resultDraw]}>
+                        {entry.result}
                       </Text>
                     </View>
-                  )}
-                </Pressable>
-              </>
-            ) : (
-              <Text style={ps.noWallet}>No embedded wallet found</Text>
-            )}
-          </View>
-        </View>
-
-        {/* ── SIGN MESSAGE BUTTON ──────────────────────────── */}
-        <Pressable
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            setSignPanelOpen(true);
-          }}
-        >
-          {({ pressed: p }) => (
-            <View style={[ps.signBtn, p && ps.btnPressed]}>
-              <View style={ps.signBtnLeft}>
-                <MaterialCommunityIcons name="shield-key-outline" size={22} color={CYAN} />
-                <View>
-                  <Text style={ps.signBtnTitle}>SIGN MESSAGE</Text>
-                  <Text style={ps.signBtnSub}>Prove wallet ownership</Text>
-                </View>
-              </View>
-              <MaterialCommunityIcons name="chevron-right" size={22} color={CYAN} />
+                  ))}
+                  </ScrollView>
+                  <View pointerEvents="none" style={ps.historyRailArcade}>
+                    <View
+                      style={[
+                        ps.historyThumbArcade,
+                        {
+                          height: Math.max(
+                            32,
+                            (historyViewportHeight / Math.max(historyContentHeight, 1)) *
+                              (historyViewportHeight - 8),
+                          ),
+                          transform: [
+                            {
+                              translateY:
+                                ((historyViewportHeight -
+                                  Math.max(
+                                    32,
+                                    (historyViewportHeight / Math.max(historyContentHeight, 1)) *
+                                      (historyViewportHeight - 8),
+                                  ) -
+                                  8) *
+                                  historyScrollY) /
+                                Math.max(historyContentHeight - historyViewportHeight, 1),
+                            },
+                          ],
+                        },
+                      ]}
+                    />
+                  </View>
+                </>
+              )}
             </View>
-          )}
-        </Pressable>
-
-        <Pressable onPress={() => setEditPanelOpen(true)}>
-          {({ pressed: p }) => (
-            <View style={[ps.signBtn, p && ps.btnPressed]}>
-              <View style={ps.signBtnLeft}>
-                <MaterialCommunityIcons name="account-edit-outline" size={22} color={AMBER} />
-                <View>
-                  <Text style={[ps.signBtnTitle, { color: AMBER }]}>UPDATE PROFILE</Text>
-                  <Text style={ps.signBtnSub}>Slide panel with edit controls</Text>
-                </View>
-              </View>
-              <MaterialCommunityIcons name="chevron-right" size={22} color={AMBER} />
-            </View>
-          )}
-        </Pressable>
-
-        <Pressable onPress={() => setPointsPanelOpen(true)}>
-          {({ pressed: p }) => (
-            <View style={[ps.signBtn, p && ps.btnPressed]}>
-              <View style={ps.signBtnLeft}>
-                <MaterialCommunityIcons name="wallet-plus-outline" size={22} color={CYAN} />
-                <View>
-                  <Text style={ps.signBtnTitle}>POINTS ACTIONS</Text>
-                  <Text style={ps.signBtnSub}>Refresh, buy and sell in right panel</Text>
-                </View>
-              </View>
-              <MaterialCommunityIcons name="chevron-right" size={22} color={CYAN} />
-            </View>
-          )}
-        </Pressable>
+          </>
+        ) : null}
 
         {/* ── LOGOUT BUTTON ────────────────────────────────── */}
-        <Pressable onPress={onLogout} disabled={logoutBusy}>
-          {({ pressed: p }) => (
-            <View style={[ps.logoutBtn, p && ps.btnPressed]}>
-              {logoutBusy ? (
-                <ActivityIndicator size="small" color={MAGENTA} />
-              ) : (
-                <MaterialCommunityIcons name="logout-variant" size={22} color={MAGENTA} />
-              )}
-              <Text style={ps.logoutBtnText}>{logoutBusy ? 'LOGGING OUT...' : 'LOG OUT'}</Text>
-            </View>
-          )}
-        </Pressable>
+        <View style={ps.logoutBtnWrap}>
+          <Pressable onPress={onLogout} disabled={logoutBusy}>
+            {({ pressed: p }) => (
+              <View style={[ps.logoutBtn, p && ps.btnPressed]}>
+                {logoutBusy ? (
+                  <ActivityIndicator size="small" color={MAGENTA} />
+                ) : (
+                  <MaterialCommunityIcons name="logout-variant" size={22} color={MAGENTA} />
+                )}
+                <Text style={ps.logoutBtnText}>{logoutBusy ? 'LOGGING OUT...' : 'LOG OUT'}</Text>
+              </View>
+            )}
+          </Pressable>
+        </View>
 
         {/* ── FOOTER ───────────────────────────────────────── */}
         <View style={ps.footer}>
@@ -795,21 +1168,23 @@ export default function ProfileScreen() {
         <View style={ps.sideBody}>
           <Text style={ps.sidePoints}>{profileData?.user.points ?? '--'}</Text>
           <Text style={ps.sideHint}>Current account points</Text>
-          <Pressable style={ps.sideActionBtn} onPress={() => void refreshPoints()} disabled={pointsLoading}>
+          <Pressable style={ps.sideActionBtn} onPress={() => void refreshPoints()} disabled={pointsLoading || tradeBusy}>
             <MaterialCommunityIcons name="refresh" size={18} color={CYAN} />
             <Text style={ps.sideActionText}>{pointsLoading ? 'Refreshing...' : 'Refresh'}</Text>
           </Pressable>
-          <Pressable style={ps.sideActionBtn} onPress={() => setTradeMode('BUY')}>
+          <Pressable style={ps.sideActionBtn} onPress={() => void handleBuyPoints()} disabled={tradeBusy}>
             <MaterialCommunityIcons name="cart-outline" size={18} color={AMBER} />
-            <Text style={ps.sideActionText}>Buy</Text>
+            <Text style={ps.sideActionText}>{tradeBusy && tradeMode === 'BUY' ? 'Buying...' : 'Buy'}</Text>
           </Pressable>
-          <Pressable style={ps.sideActionBtn} onPress={() => setTradeMode('SELL')}>
+          <Pressable style={ps.sideActionBtn} onPress={() => void handleSellPoints()} disabled={tradeBusy}>
             <MaterialCommunityIcons name="cash-minus" size={18} color={MAGENTA} />
-            <Text style={ps.sideActionText}>Sell</Text>
+            <Text style={ps.sideActionText}>{tradeBusy && tradeMode === 'SELL' ? 'Selling...' : 'Sell'}</Text>
           </Pressable>
           {tradeMode ? (
             <Text style={ps.sideHint}>
-              {tradeMode} flow UI is open. Connect this button to your purchase/sell endpoint when ready.
+              {tradeBusy
+                ? `Processing ${tradeMode}…`
+                : `${TRADE_SOL} SOL ↔ ${TRADE_POINTS} points · last action: ${tradeMode}`}
             </Text>
           ) : null}
         </View>
@@ -1420,5 +1795,375 @@ const ps = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1.2,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  // ─── Hero header ──────────────────────────────────────────
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(8,8,12,0.92)',
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  heroRowReactive: {
+    borderColor: 'rgba(255,0,110,0.45)',
+    shadowColor: PINK,
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    backgroundColor: 'rgba(20,8,16,0.94)',
+  },
+  heroAvatarWrap: {
+    // touch target
+  },
+  heroAvatar: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(34,211,238,0.10)',
+    borderWidth: 2,
+    borderColor: CYAN,
+    shadowColor: CYAN,
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    position: 'relative',
+  },
+  heroAvatarReactive: {
+    backgroundColor: 'rgba(255,0,110,0.10)',
+    borderColor: PINK,
+    shadowColor: PINK,
+  },
+  heroAvatarEmoji: {
+    fontSize: 34,
+  },
+  heroAvatarEditBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: CYAN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: BG,
+  },
+  heroAvatarEditBadgeReactive: {
+    backgroundColor: PINK,
+  },
+  heroInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  heroEyebrow: {
+    color: DIM,
+    fontSize: 9,
+    letterSpacing: 1.6,
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  heroName: {
+    color: INK,
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    marginTop: 1,
+  },
+  heroEmail: {
+    color: DIM,
+    fontSize: 11,
+    letterSpacing: 0.4,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  heroChipRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  heroChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255,184,0,0.08)',
+  },
+  heroChipDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: PINK,
+  },
+  heroChipText: {
+    fontWeight: '900',
+    fontSize: 9,
+    letterSpacing: 1.2,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  // ─── Tab bar ──────────────────────────────────────────────
+  tabBar: {
+    flexDirection: 'row',
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(8,8,12,0.92)',
+    padding: 4,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  tabIndicator: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    width: '32%',
+    borderRadius: 2,
+    borderWidth: 1.5,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 2,
+  },
+  tabText: {
+    color: DIM,
+    fontSize: 11,
+    letterSpacing: 1.3,
+    fontWeight: '900',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  tabLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: PINK,
+    marginLeft: 2,
+    shadowColor: PINK,
+    shadowOpacity: 0.95,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  profileShell: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: 'rgba(8,8,12,0.92)',
+    borderRadius: 2,
+    padding: 12,
+    marginTop: 12,
+  },
+  profileTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  profileSquareAvatar: {
+    width: 70,
+    height: 70,
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileSquareAvatarText: {
+    fontSize: 32,
+  },
+  profileTopInfo: {
+    flex: 1,
+    gap: 3,
+  },
+  profileMainName: {
+    color: INK,
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  profileSubName: {
+    color: '#cbd5e1',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  profileJoined: {
+    color: DIM,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  solanaActionRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  solanaActionBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(9,9,9,0.95)',
+    borderRadius: 2,
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  solanaActionText: {
+    color: INK,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  gameStatsHeader: {
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  gameStatsTitle: {
+    color: INK,
+    fontSize: 32,
+    fontWeight: '900',
+  },
+  ratingBox: {
+    width: 110,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(8,8,8,0.95)',
+    borderRadius: 2,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  ratingBoxValue: {
+    color: INK,
+    fontSize: 34,
+    fontWeight: '900',
+  },
+  ratingBoxLabel: {
+    color: DIM,
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  historyTitle: {
+    color: INK,
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  historyCount: {
+    color: DIM,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  historyList: {
+    borderWidth: 1.5,
+    borderColor: 'rgba(34,211,238,0.35)',
+    backgroundColor: 'rgba(8,8,8,0.98)',
+    borderRadius: 2,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    minHeight: 120,
+    maxHeight: 360,
+    shadowColor: CYAN,
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  historyScroll: {
+    flexGrow: 0,
+    maxHeight: 340,
+    paddingRight: 2,
+  },
+  historyRailArcade: {
+    position: 'absolute',
+    right: 4,
+    top: 10,
+    bottom: 10,
+    width: 8,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,184,0,0.5)',
+    backgroundColor: 'rgba(255,184,0,0.12)',
+    borderRadius: 2,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 4,
+  },
+  historyThumbArcade: {
+    width: 4,
+    borderRadius: 1,
+    backgroundColor: AMBER,
+  },
+  historyEmpty: {
+    color: DIM,
+    textAlign: 'center',
+    paddingVertical: 18,
+  },
+  historyItem: {
+    minHeight: 44,
+    paddingHorizontal: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.12)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  historyItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    marginRight: 8,
+  },
+  historyOpponent: {
+    color: INK,
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+  },
+  historyResult: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  resultWin: {
+    color: '#22c55e',
+    borderColor: 'rgba(34,197,94,0.6)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
+  },
+  resultLoss: {
+    color: '#ef4444',
+    borderColor: 'rgba(239,68,68,0.6)',
+    backgroundColor: 'rgba(239,68,68,0.12)',
+  },
+  resultDraw: {
+    color: AMBER,
+    borderColor: 'rgba(255,184,0,0.5)',
+    backgroundColor: 'rgba(255,184,0,0.1)',
+  },
+  logoutBtnWrap: {
+    marginTop: 92,
   },
 });

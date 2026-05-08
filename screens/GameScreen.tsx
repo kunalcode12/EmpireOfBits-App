@@ -1,15 +1,75 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Animated, Easing, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Dimensions, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChessBoard } from '../components/ChessBoard';
 import { ChessPiece } from '../components/ChessPiece';
 import { DrawResignControls } from '../components/DrawResignControls';
 import { Timer } from '../components/Timer';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { useChessGame } from '../hooks/useChessGame';
+import {
+  connectToSession,
+  type ArenaToggledEvent,
+  type BoostActivatedEvent,
+  type CountdownEvent,
+  type ImmediateItemDropEvent,
+  type SessionStartedEvent,
+} from '../lib/websocket';
+import {
+  createSession as vorldCreateSession,
+  setToken as vorldSetToken,
+  updateSessionStatus as vorldUpdateSessionStatus,
+} from '../lib/vorldTV';
 import { useAuth } from '../store/AuthContext';
 import { useGame } from '../store/GameContext';
 import { applyMoveToBoard, boardToFenPlacement, isKingInCheck, oppositeColor, parseFen, squareToCoords, type ChessMove, type Color, type PromotionPiece } from '../utils/chessHelpers';
+import {
+  clearReactiveSessionId,
+  loadReactiveSnapshot,
+  saveReactiveSessionId,
+} from '../utils/reactiveStorageHelper';
+
+// ─── Reactive Arcade additions (purely additive — no chess logic touched) ────
+const REACTIVE_PINK = '#FF006E';
+const REACTIVE_CYAN = '#00F5FF';
+const REACTIVE_YELLOW = '#FFE600';
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const SESSION_SHEET_HEIGHT = SCREEN_HEIGHT * 0.75;
+
+type SessionStatus = 'idle' | 'creating' | 'connecting' | 'active' | 'ended' | 'error';
+type LogTone = 'info' | 'started' | 'countdown' | 'arena' | 'boost' | 'drop' | 'error';
+type SessionLogEntry = { id: string; text: string; tone: LogTone; timestamp: number };
+type CelebrationData = { title: string; subtitle: string; tone: 'boost' | 'drop' } | null;
+
+// Reactive session defaults — game config is fixed; titles auto-rotate per session.
+const REACTIVE_GAME_CONFIG_ID = '7f3d9c02-93a4-472c-9c95-f6f729597389';
+const CHESS_SESSION_TITLE_POOL = [
+  'Knights of the Bit Realm',
+  'Pawn Storm — Reactive Cup',
+  'Rook & Roll Showdown',
+  'Bishops at Dawn',
+  'Endgame Empire',
+  'Checkmate Carnival',
+  'Castle Crusaders Live',
+  'Gambit Galaxy',
+  'Zugzwang Zone',
+  'En Passant Express',
+  'Forked Kingdom',
+  'Discovered Check Derby',
+  'King Hunt Arcade',
+  'Queen\'s Reactive Gambit',
+  'Sicilian Sparks',
+  'Pixel Pawn Promotion',
+  'Stalemate Showdown',
+  'Tactics Tower Live',
+  'Bit Bishop Bonanza',
+  'Fool\'s Mate Festival',
+];
+const pickRandomChessTitle = () => {
+  const idx = Math.floor(Math.random() * CHESS_SESSION_TITLE_POOL.length);
+  const tag = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${CHESS_SESSION_TITLE_POOL[idx]} #${tag}`;
+};
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const RUNE_MAP: Record<string, string> = {
@@ -117,6 +177,311 @@ export function GameScreen() {
   const checkOpacity = useRef(new Animated.Value(0)).current;
   const checkTranslateY = useRef(new Animated.Value(-8)).current;
 
+  // ─── Reactive Arcade — read-only mirror of ArcadeCenterScreen storage ─────
+  const [reactiveOn, setReactiveOn] = useState(false);
+  const [twitchHandle, setTwitchHandle] = useState<string | null>(null);
+  const [reactiveAccessToken, setReactiveAccessToken] = useState<string | null>(null);
+  const [reactiveStreamUrl, setReactiveStreamUrl] = useState<string | null>(null);
+  // ─── Reactive Session control state ───────────────────────────────────────
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle');
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionGameConfigId, setSessionGameConfigId] = useState(REACTIVE_GAME_CONFIG_ID);
+  const [sessionTitle, setSessionTitle] = useState(pickRandomChessTitle);
+  const [eventLog, setEventLog] = useState<SessionLogEntry[]>([]);
+  const [activeCountdown, setActiveCountdown] = useState<{ secondsRemaining: number; phase: string } | null>(null);
+  const [latestBoost, setLatestBoost] = useState<{ actorName: string; amount: number; totalPoints: number } | null>(null);
+  const [celebration, setCelebration] = useState<CelebrationData>(null);
+  const sessionSheetY = useRef(new Animated.Value(SESSION_SHEET_HEIGHT)).current;
+  const celebrationOpacity = useRef(new Animated.Value(0)).current;
+  const celebrationScale = useRef(new Animated.Value(0.8)).current;
+  const socketRef = useRef<ReturnType<typeof connectToSession> | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      try {
+        const snap = await loadReactiveSnapshot();
+        if (!mounted) return;
+        const live = Boolean(snap.enabled && snap.accessToken && snap.user);
+        setReactiveOn(live);
+        if (snap.streamUrl) {
+          const m = snap.streamUrl.match(/twitch\.tv\/([a-zA-Z0-9_]+)/);
+          setTwitchHandle(m ? m[1] : snap.streamUrl);
+          setReactiveStreamUrl(snap.streamUrl);
+        }
+        if (snap.accessToken) setReactiveAccessToken(snap.accessToken);
+      } catch {
+        // reactive UI just won't render
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (socketRef.current) {
+        try {
+          socketRef.current.disconnect();
+        } catch {
+          // ignore
+        }
+        socketRef.current = null;
+      }
+    };
+  }, []);
+
+  const appendLog = useCallback((text: string, tone: LogTone = 'info') => {
+    setEventLog((prev) => {
+      const entry: SessionLogEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        text,
+        tone,
+        timestamp: Date.now(),
+      };
+      const next = [entry, ...prev];
+      return next.slice(0, 60);
+    });
+  }, []);
+
+  const showCelebration = useCallback(
+    (data: NonNullable<CelebrationData>) => {
+      setCelebration(data);
+      celebrationOpacity.setValue(0);
+      celebrationScale.setValue(0.7);
+      Animated.parallel([
+        Animated.timing(celebrationOpacity, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(celebrationScale, {
+          toValue: 1,
+          friction: 6,
+          tension: 110,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      const id = setTimeout(() => {
+        Animated.timing(celebrationOpacity, {
+          toValue: 0,
+          duration: 260,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }).start(() => setCelebration(null));
+      }, 1700);
+      return () => clearTimeout(id);
+    },
+    [celebrationOpacity, celebrationScale],
+  );
+
+  const openSessionPanel = useCallback(() => {
+    setSessionPanelOpen(true);
+    sessionSheetY.setValue(SESSION_SHEET_HEIGHT);
+    Animated.spring(sessionSheetY, {
+      toValue: 0,
+      tension: 70,
+      friction: 12,
+      useNativeDriver: true,
+    }).start();
+  }, [sessionSheetY]);
+
+  const closeSessionPanel = useCallback(() => {
+    Animated.timing(sessionSheetY, {
+      toValue: SESSION_SHEET_HEIGHT,
+      duration: 240,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setSessionPanelOpen(false);
+    });
+  }, [sessionSheetY]);
+
+  const wireSocketHandlers = useCallback(
+    (socket: ReturnType<typeof connectToSession>) => {
+      socket.on('connect', () => appendLog('Socket connected', 'info'));
+      socket.on('disconnect', (reason: string) => appendLog(`Socket disconnected: ${reason}`, 'info'));
+      socket.on('connect_error', (error: Error) => appendLog(`Connect error: ${error.message}`, 'error'));
+
+      socket.on('session_started', (d: SessionStartedEvent) => {
+        setSessionStatus('active');
+        appendLog(`Session started: ${d.sessionId}`, 'started');
+      });
+      socket.on('countdown', (d: CountdownEvent) => {
+        setActiveCountdown({ secondsRemaining: d.secondsRemaining, phase: d.phase });
+        appendLog(`Countdown ${d.phase}: ${d.secondsRemaining}s`, 'countdown');
+        // The `session_started` event isn't always emitted before countdown
+        // ticks roll in. Treat any countdown as proof the session is live so
+        // the status pill flips from "Connecting…" to "Live" instead of
+        // sticking on the API's "waiting" state.
+        setSessionStatus((prev) =>
+          prev === 'connecting' || prev === 'creating' || prev === 'idle' ? 'active' : prev,
+        );
+        if (d.secondsRemaining <= 0) {
+          setActiveCountdown(null);
+        }
+      });
+      socket.on('arena_toggled', (d: ArenaToggledEvent) => {
+        appendLog(`Arena ${d.arenaActive ? 'active' : 'inactive'}`, 'arena');
+      });
+      socket.on('boost_activated', (d: BoostActivatedEvent) => {
+        setLatestBoost({ actorName: d.actorName, amount: d.amount, totalPoints: d.totalPoints });
+        appendLog(`Boost: ${d.actorName} +${d.amount} (total ${d.totalPoints})`, 'boost');
+        showCelebration({
+          title: `+${d.amount} POINTS!`,
+          subtitle: `${d.actorName} boosted • total ${d.totalPoints}`,
+          tone: 'boost',
+        });
+      });
+      socket.on('immediate_item_drop', (d: ImmediateItemDropEvent) => {
+        appendLog(`Drop: ${d.itemName} → ${d.targetActorName} (by ${d.purchaserUsername})`, 'drop');
+        showCelebration({
+          title: d.itemName,
+          subtitle: `${d.purchaserUsername} → ${d.targetActorName}`,
+          tone: 'drop',
+        });
+      });
+    },
+    [appendLog, showCelebration],
+  );
+
+  const handleCreateSession = useCallback(async () => {
+    if (!reactiveAccessToken) {
+      setSessionError('Missing reactive access token. Re-enable Reactive Arcade.');
+      setSessionStatus('error');
+      return;
+    }
+    const streamUrl = reactiveStreamUrl ?? '';
+    if (!streamUrl) {
+      setSessionError('Stream URL missing.');
+      setSessionStatus('error');
+      return;
+    }
+    setSessionError(null);
+    setSessionStatus('creating');
+    // Always use the fixed reactive game config id and rotate to a fresh
+    // chess-themed title for every new session.
+    const gameConfigId = REACTIVE_GAME_CONFIG_ID;
+    const title = pickRandomChessTitle();
+    setSessionGameConfigId(gameConfigId);
+    setSessionTitle(title);
+    appendLog(`Creating session "${title}"…`, 'info');
+
+    try {
+      vorldSetToken(reactiveAccessToken);
+      const response = await vorldCreateSession(
+        {
+          gameConfigId,
+          streamUrl,
+          sessionTitle: title,
+        },
+        reactiveAccessToken,
+      );
+      // API shape: { success: true, data: { session: { id: "TWQEGG", ... } } }
+      // wrapped by axios as response.data, so the id sits at response.data.data.session.id.
+      const body = (response as { data?: unknown }).data as
+        | {
+            data?: { session?: { id?: string; sessionId?: string } };
+            session?: { id?: string; sessionId?: string };
+            id?: string;
+            sessionId?: string;
+          }
+        | undefined;
+      const session = body?.data?.session ?? body?.session;
+      const newId =
+        session?.id ??
+        session?.sessionId ??
+        body?.id ??
+        body?.sessionId ??
+        null;
+      if (!newId) {
+        throw new Error('Session created but no id returned.');
+      }
+      setSessionId(newId);
+      // Persist so ResultScreen can offer to end the session even after we
+      // navigate away from this screen.
+      void saveReactiveSessionId(newId);
+      appendLog(`Session created: ${newId}`, 'started');
+
+      setSessionStatus('connecting');
+      const socket = connectToSession(reactiveAccessToken, newId);
+      socketRef.current = socket;
+      wireSocketHandlers(socket);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to create session.';
+      setSessionError(msg);
+      setSessionStatus('error');
+      appendLog(msg, 'error');
+    }
+  }, [appendLog, reactiveAccessToken, reactiveStreamUrl, sessionGameConfigId, sessionTitle, wireSocketHandlers]);
+
+  const handleDisconnectSession = useCallback(() => {
+    if (socketRef.current) {
+      try {
+        socketRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      socketRef.current = null;
+    }
+    setSessionStatus((prev) => (prev === 'ended' ? 'ended' : 'idle'));
+    setActiveCountdown(null);
+    appendLog('Disconnected from session', 'info');
+  }, [appendLog]);
+
+  const handleEndSession = useCallback(async () => {
+    if (!sessionId) {
+      handleDisconnectSession();
+      return;
+    }
+    try {
+      if (reactiveAccessToken) {
+        vorldSetToken(reactiveAccessToken);
+        await vorldUpdateSessionStatus(sessionId, 'completed', reactiveAccessToken);
+        appendLog(`Session ${sessionId} marked completed`, 'started');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to end session.';
+      appendLog(msg, 'error');
+    } finally {
+      if (socketRef.current) {
+        try {
+          socketRef.current.disconnect();
+        } catch {
+          // ignore
+        }
+        socketRef.current = null;
+      }
+      setSessionStatus('ended');
+      setActiveCountdown(null);
+      // Session is over — drop the saved id so ResultScreen won't offer to end it again.
+      void clearReactiveSessionId();
+    }
+  }, [appendLog, handleDisconnectSession, reactiveAccessToken, sessionId]);
+
+  const sessionStatusLabel = useMemo(() => {
+    switch (sessionStatus) {
+      case 'idle':
+        return 'Ready';
+      case 'creating':
+        return 'Creating…';
+      case 'connecting':
+        return 'Connecting…';
+      case 'active':
+        return 'Live';
+      case 'ended':
+        return 'Ended';
+      case 'error':
+        return 'Error';
+      default:
+        return sessionStatus;
+    }
+  }, [sessionStatus]);
+
   useEffect(() => {
     if (!game.toast) return undefined;
     const id = setTimeout(game.clearToast, 2200);
@@ -204,9 +569,65 @@ export function GameScreen() {
         </Animated.View>
       )}
       <View style={styles.content}>
-        <View style={styles.retroHeader}>
-          <Text style={styles.retroHeaderText}>EMPIRE OF BITS - ARCADE CHESS</Text>
+        <View style={styles.retroHeaderRow}>
+          <View style={[styles.retroHeader, reactiveOn && styles.retroHeaderReactive]}>
+            <Text style={[styles.retroHeaderText, reactiveOn && styles.retroHeaderTextReactive]}>
+              {reactiveOn ? 'EMPIRE OF BITS · REACTIVE CHESS' : 'EMPIRE OF BITS - ARCADE CHESS'}
+            </Text>
+          </View>
+          {reactiveOn && twitchHandle ? (
+            <View style={styles.twitchChip}>
+              <MaterialCommunityIcons name="twitch" size={12} color={REACTIVE_PINK} />
+              <Text style={styles.twitchChipText} numberOfLines={1}>
+                @{twitchHandle}
+              </Text>
+            </View>
+          ) : null}
         </View>
+
+        {reactiveOn && (
+          <View style={styles.reactiveBanner}>
+            <View style={styles.reactiveBannerDot} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.reactiveBannerTitle}>REACTIVE SESSION</Text>
+              <Text style={styles.reactiveBannerSub}>
+                Status: {sessionStatusLabel}
+                {sessionId ? `  ·  ${sessionId.slice(0, 10)}…` : ''}
+              </Text>
+            </View>
+            <Pressable style={styles.activateBtn} onPress={openSessionPanel}>
+              <MaterialCommunityIcons
+                name={sessionStatus === 'active' ? 'broadcast' : 'play-circle-outline'}
+                size={14}
+                color="#fff"
+              />
+              <Text style={styles.activateBtnText}>
+                {sessionStatus === 'active' || sessionStatus === 'connecting'
+                  ? 'CONTROLS'
+                  : 'ACTIVATE'}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        {reactiveOn && activeCountdown && (
+          <View style={styles.countdownBanner}>
+            <MaterialCommunityIcons name="timer-sand" size={14} color={REACTIVE_CYAN} />
+            <Text style={styles.countdownLabel}>{activeCountdown.phase.toUpperCase()}</Text>
+            <Text style={styles.countdownValue}>{activeCountdown.secondsRemaining}s</Text>
+          </View>
+        )}
+
+        {reactiveOn && latestBoost && (
+          <View style={styles.boostTicker}>
+            <MaterialCommunityIcons name="rocket-launch" size={13} color={REACTIVE_YELLOW} />
+            <Text style={styles.boostTickerText} numberOfLines={1}>
+              {latestBoost.actorName} +{latestBoost.amount}
+            </Text>
+            <Text style={styles.boostTickerTotal}>= {latestBoost.totalPoints}</Text>
+          </View>
+        )}
+
         {game.opponentDisconnected && <Text style={styles.banner}>Opponent disconnected - waiting for them to return...</Text>}
         <View style={styles.playerRow}>
           <View>
@@ -344,8 +765,202 @@ export function GameScreen() {
 
       <PromotionModal visible={Boolean(chess.pendingPromotion)} color={orientation} onPick={chess.choosePromotion} onCancel={chess.cancelPromotion} />
       <DrawOfferModal visible={game.drawOfferIncoming} onAccept={game.acceptDrawOffer} onReject={game.rejectDrawOffer} />
+
+      {celebration && (
+        <View pointerEvents="none" style={styles.celebrationOverlay}>
+          <Animated.View
+            style={[
+              styles.celebrationCard,
+              celebration.tone === 'drop' ? styles.celebrationCardDrop : styles.celebrationCardBoost,
+              {
+                opacity: celebrationOpacity,
+                transform: [{ scale: celebrationScale }],
+              },
+            ]}
+          >
+            <View style={styles.celebrationSparkles}>
+              <Text style={styles.celebrationSparkle}>✦</Text>
+              <Text style={styles.celebrationSparkle}>✧</Text>
+              <Text style={styles.celebrationSparkle}>✦</Text>
+            </View>
+            <MaterialCommunityIcons
+              name={celebration.tone === 'drop' ? 'gift-outline' : 'rocket-launch'}
+              size={36}
+              color={celebration.tone === 'drop' ? REACTIVE_CYAN : REACTIVE_YELLOW}
+            />
+            <Text style={styles.celebrationTitle}>{celebration.title}</Text>
+            <Text style={styles.celebrationSubtitle}>{celebration.subtitle}</Text>
+          </Animated.View>
+        </View>
+      )}
+
+      {sessionPanelOpen && (
+        <View style={styles.sessionOverlay}>
+          <Pressable style={styles.sessionBackdrop} onPress={closeSessionPanel} />
+          <Animated.View
+            style={[
+              styles.sessionSheet,
+              { transform: [{ translateY: sessionSheetY }] },
+            ]}
+          >
+            <View style={styles.sessionGrip} />
+            <View style={styles.sessionHeader}>
+              <Pressable onPress={closeSessionPanel} style={styles.sessionBackBtn}>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={REACTIVE_CYAN} />
+                <Text style={styles.sessionBackText}>HIDE</Text>
+              </Pressable>
+              <Text style={styles.sessionTitle}>REACTIVE SESSION</Text>
+              <View
+                style={[
+                  styles.sessionStatusPill,
+                  sessionStatus === 'active' && styles.sessionStatusPillActive,
+                  sessionStatus === 'error' && styles.sessionStatusPillError,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.sessionStatusDot,
+                    sessionStatus === 'active' && styles.sessionStatusDotActive,
+                    sessionStatus === 'error' && styles.sessionStatusDotError,
+                  ]}
+                />
+                <Text style={styles.sessionStatusText}>{sessionStatusLabel}</Text>
+              </View>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.sessionBody} keyboardShouldPersistTaps="handled">
+              <View style={styles.sessionRow}>
+                <Text style={styles.sessionFieldLabel}>STREAM URL</Text>
+                <Text style={styles.sessionFieldReadonly} numberOfLines={1}>
+                  {reactiveStreamUrl ?? '— not set —'}
+                </Text>
+              </View>
+
+              <View style={styles.sessionRow}>
+                <Text style={styles.sessionFieldLabel}>GAME CONFIG ID</Text>
+                <Text style={styles.sessionFieldReadonly} numberOfLines={1}>
+                  {sessionGameConfigId}
+                </Text>
+              </View>
+
+              <View style={styles.sessionRow}>
+                <View style={styles.sessionTitleHeaderRow}>
+                  <Text style={styles.sessionFieldLabel}>SESSION TITLE</Text>
+                  <Pressable
+                    onPress={() => setSessionTitle(pickRandomChessTitle())}
+                    style={styles.sessionRerollBtn}
+                    disabled={sessionStatus === 'creating' || sessionStatus === 'connecting' || sessionStatus === 'active'}
+                  >
+                    <MaterialCommunityIcons name="dice-multiple-outline" size={12} color={REACTIVE_CYAN} />
+                    <Text style={styles.sessionRerollBtnText}>REROLL</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.sessionFieldReadonly} numberOfLines={1}>
+                  {sessionTitle}
+                </Text>
+              </View>
+
+              {sessionId ? (
+                <View style={styles.sessionRow}>
+                  <Text style={styles.sessionFieldLabel}>SESSION ID</Text>
+                  <Text style={styles.sessionFieldReadonly} numberOfLines={1}>
+                    {sessionId}
+                  </Text>
+                </View>
+              ) : null}
+
+              {sessionError ? <Text style={styles.sessionErrorText}>{sessionError}</Text> : null}
+
+              <View style={styles.sessionButtonRow}>
+                <Pressable
+                  style={[
+                    styles.sessionPrimaryBtn,
+                    (sessionStatus === 'creating' || sessionStatus === 'connecting' || sessionStatus === 'active') &&
+                      styles.sessionBtnDisabled,
+                  ]}
+                  disabled={
+                    sessionStatus === 'creating' ||
+                    sessionStatus === 'connecting' ||
+                    sessionStatus === 'active'
+                  }
+                  onPress={() => void handleCreateSession()}
+                >
+                  {sessionStatus === 'creating' || sessionStatus === 'connecting' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <MaterialCommunityIcons name="broadcast" size={16} color="#fff" />
+                      <Text style={styles.sessionPrimaryBtnText}>CREATE & ACTIVATE</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+
+              <View style={styles.sessionButtonRow}>
+                <Pressable
+                  style={[
+                    styles.sessionSecondaryBtn,
+                    !socketRef.current && styles.sessionBtnDisabled,
+                  ]}
+                  disabled={!socketRef.current}
+                  onPress={handleDisconnectSession}
+                >
+                  <MaterialCommunityIcons name="lan-disconnect" size={14} color={REACTIVE_CYAN} />
+                  <Text style={styles.sessionSecondaryBtnText}>DISCONNECT</Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.sessionDangerBtn,
+                    !sessionId && styles.sessionBtnDisabled,
+                  ]}
+                  disabled={!sessionId}
+                  onPress={() => void handleEndSession()}
+                >
+                  <MaterialCommunityIcons name="stop-circle-outline" size={14} color={REACTIVE_PINK} />
+                  <Text style={styles.sessionDangerBtnText}>END SESSION</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.sessionLogTitle}>EVENT LOG</Text>
+              <View style={styles.sessionLogBox}>
+                {eventLog.length === 0 ? (
+                  <Text style={styles.sessionLogEmpty}>No events yet — create a session to begin.</Text>
+                ) : (
+                  eventLog.map((entry) => (
+                    <View key={entry.id} style={styles.sessionLogRow}>
+                      <View style={[styles.sessionLogDot, sessionLogToneStyle(entry.tone)]} />
+                      <Text style={styles.sessionLogText} numberOfLines={2}>
+                        {entry.text}
+                      </Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            </ScrollView>
+          </Animated.View>
+        </View>
+      )}
     </View>
   );
+}
+
+function sessionLogToneStyle(tone: LogTone) {
+  switch (tone) {
+    case 'started':
+      return { backgroundColor: REACTIVE_CYAN };
+    case 'countdown':
+      return { backgroundColor: '#9cc8ff' };
+    case 'arena':
+      return { backgroundColor: '#a78bfa' };
+    case 'boost':
+      return { backgroundColor: REACTIVE_YELLOW };
+    case 'drop':
+      return { backgroundColor: REACTIVE_PINK };
+    case 'error':
+      return { backgroundColor: '#ef4444' };
+    default:
+      return { backgroundColor: '#6b7280' };
+  }
 }
 
 function PromotionModal({
@@ -930,5 +1545,465 @@ const styles = StyleSheet.create({
   acceptText: {
     color: colors.text,
     fontWeight: '900',
+  },
+  retroHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
+  },
+  retroHeaderReactive: {
+    borderColor: REACTIVE_PINK,
+    backgroundColor: '#3d1729',
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  retroHeaderTextReactive: {
+    color: '#ffd6e6',
+  },
+  twitchChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.10)',
+    maxWidth: 160,
+  },
+  twitchChipText: {
+    color: REACTIVE_PINK,
+    fontWeight: '800',
+    fontSize: typography.tiny,
+    letterSpacing: 0.5,
+  },
+  reactiveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.10)',
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveBannerDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: REACTIVE_PINK,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.95,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveBannerTitle: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.small,
+    letterSpacing: 1.4,
+  },
+  reactiveBannerSub: {
+    color: colors.mutedText,
+    fontSize: typography.tiny,
+    letterSpacing: 0.4,
+    marginTop: 1,
+  },
+  activateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: radii.sm,
+    backgroundColor: REACTIVE_PINK,
+    borderWidth: 1,
+    borderColor: REACTIVE_CYAN,
+  },
+  activateBtnText: {
+    color: '#fff',
+    fontWeight: '900',
+    fontSize: typography.tiny,
+    letterSpacing: 1,
+  },
+  countdownBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.55)',
+    backgroundColor: 'rgba(0,245,255,0.10)',
+  },
+  countdownLabel: {
+    color: REACTIVE_CYAN,
+    fontWeight: '900',
+    fontSize: typography.tiny,
+    letterSpacing: 1.6,
+    flex: 1,
+  },
+  countdownValue: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.body,
+    letterSpacing: 0.5,
+  },
+  boostTicker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,230,0,0.45)',
+    backgroundColor: 'rgba(255,230,0,0.08)',
+  },
+  boostTickerText: {
+    flex: 1,
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: typography.tiny,
+    letterSpacing: 0.5,
+  },
+  boostTickerTotal: {
+    color: REACTIVE_YELLOW,
+    fontWeight: '900',
+    fontSize: typography.tiny,
+    letterSpacing: 0.5,
+  },
+  celebrationOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  celebrationCard: {
+    width: '100%',
+    maxWidth: 320,
+    borderRadius: radii.lg,
+    borderWidth: 2,
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(8,8,8,0.94)',
+    shadowOpacity: 0.7,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 14,
+  },
+  celebrationCardBoost: {
+    borderColor: REACTIVE_YELLOW,
+    shadowColor: REACTIVE_YELLOW,
+  },
+  celebrationCardDrop: {
+    borderColor: REACTIVE_CYAN,
+    shadowColor: REACTIVE_CYAN,
+  },
+  celebrationSparkles: {
+    flexDirection: 'row',
+    gap: 14,
+  },
+  celebrationSparkle: {
+    color: REACTIVE_YELLOW,
+    fontSize: 16,
+    textShadowColor: REACTIVE_YELLOW,
+    textShadowRadius: 6,
+  },
+  celebrationTitle: {
+    color: colors.text,
+    fontSize: typography.heading,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    textAlign: 'center',
+  },
+  celebrationSubtitle: {
+    color: colors.mutedText,
+    fontSize: typography.small,
+    letterSpacing: 0.4,
+    textAlign: 'center',
+  },
+  sessionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+  },
+  sessionBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  sessionSheet: {
+    height: SESSION_SHEET_HEIGHT,
+    backgroundColor: '#080a10',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1.5,
+    borderTopColor: 'rgba(255,0,110,0.55)',
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 20,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+  },
+  sessionGrip: {
+    width: 46,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    alignSelf: 'center',
+    marginBottom: spacing.sm,
+  },
+  sessionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  sessionBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.45)',
+    backgroundColor: 'rgba(0,245,255,0.08)',
+  },
+  sessionBackText: {
+    color: REACTIVE_CYAN,
+    fontSize: typography.tiny,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  sessionTitle: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.body,
+    letterSpacing: 1.6,
+  },
+  sessionStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  sessionStatusPillActive: {
+    borderColor: 'rgba(34,197,94,0.6)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
+  },
+  sessionStatusPillError: {
+    borderColor: 'rgba(239,68,68,0.6)',
+    backgroundColor: 'rgba(239,68,68,0.12)',
+  },
+  sessionStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#9ca3af',
+  },
+  sessionStatusDotActive: {
+    backgroundColor: '#22c55e',
+  },
+  sessionStatusDotError: {
+    backgroundColor: '#ef4444',
+  },
+  sessionStatusText: {
+    color: colors.text,
+    fontSize: typography.tiny,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  sessionBody: {
+    paddingBottom: spacing.xxl,
+    gap: spacing.md,
+  },
+  sessionRow: {
+    gap: 6,
+  },
+  sessionFieldLabel: {
+    color: REACTIVE_CYAN,
+    fontWeight: '900',
+    fontSize: typography.tiny,
+    letterSpacing: 1.4,
+  },
+  sessionFieldReadonly: {
+    color: colors.text,
+    fontSize: typography.small,
+    letterSpacing: 0.3,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  sessionInput: {
+    color: colors.text,
+    fontSize: typography.small,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radii.sm,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  sessionErrorText: {
+    color: '#fca5a5',
+    fontSize: typography.tiny,
+    fontWeight: '700',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.45)',
+    backgroundColor: 'rgba(239,68,68,0.08)',
+  },
+  sessionButtonRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  sessionPrimaryBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: REACTIVE_PINK,
+    borderWidth: 1.5,
+    borderColor: REACTIVE_CYAN,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  sessionPrimaryBtnText: {
+    color: '#fff',
+    fontWeight: '900',
+    fontSize: typography.small,
+    letterSpacing: 1.2,
+  },
+  sessionSecondaryBtn: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,245,255,0.55)',
+    backgroundColor: 'rgba(0,245,255,0.08)',
+  },
+  sessionSecondaryBtnText: {
+    color: REACTIVE_CYAN,
+    fontWeight: '800',
+    fontSize: typography.tiny,
+    letterSpacing: 1.2,
+  },
+  sessionDangerBtn: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.10)',
+  },
+  sessionDangerBtnText: {
+    color: REACTIVE_PINK,
+    fontWeight: '800',
+    fontSize: typography.tiny,
+    letterSpacing: 1.2,
+  },
+  sessionBtnDisabled: {
+    opacity: 0.45,
+  },
+  sessionLogTitle: {
+    color: colors.subtleText,
+    fontWeight: '900',
+    fontSize: typography.tiny,
+    letterSpacing: 1.6,
+    marginTop: spacing.sm,
+  },
+  sessionLogBox: {
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    padding: spacing.sm,
+    gap: 6,
+    minHeight: 110,
+  },
+  sessionLogEmpty: {
+    color: colors.subtleText,
+    fontSize: typography.tiny,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: spacing.sm,
+  },
+  sessionLogRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  sessionLogDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginTop: 5,
+  },
+  sessionLogText: {
+    color: colors.text,
+    fontSize: typography.tiny,
+    flex: 1,
+    letterSpacing: 0.3,
+    lineHeight: 16,
+  },
+  sessionTitleHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sessionRerollBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.45)',
+    backgroundColor: 'rgba(0,245,255,0.08)',
+  },
+  sessionRerollBtnText: {
+    color: REACTIVE_CYAN,
+    fontWeight: '800',
+    fontSize: typography.tiny,
+    letterSpacing: 1,
   },
 });
