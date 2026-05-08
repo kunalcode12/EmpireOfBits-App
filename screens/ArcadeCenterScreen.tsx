@@ -159,20 +159,32 @@ function GlitchRuneRow({
 }
 
 function ArcadeBackground() {
-  const glitchTick = useRef(0);
   const [globalGlitch, setGlobalGlitch] = useState(0);
 
   useEffect(() => {
+    // Track every timer in the recursive chain and stop scheduling new ones
+    // after unmount. Without this, each remount (HMR / Strict Mode) leaks
+    // a chain that keeps calling setState on stale instances and can trip
+    // "Maximum update depth exceeded".
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
     const scheduleGlitch = () => {
+      if (cancelled) return;
       const delay = 400 + Math.random() * 1800;
-      return setTimeout(() => {
-        glitchTick.current += 1;
-        setGlobalGlitch(glitchTick.current);
+      timerId = setTimeout(() => {
+        if (cancelled) return;
+        setGlobalGlitch((tick) => tick + 1);
         scheduleGlitch();
       }, delay);
     };
-    const t = scheduleGlitch();
-    return () => clearTimeout(t);
+
+    scheduleGlitch();
+
+    return () => {
+      cancelled = true;
+      if (timerId) clearTimeout(timerId);
+    };
   }, []);
 
   return (
@@ -798,9 +810,20 @@ export function ArcadeCenterScreen() {
     void fetchPoints();
   }, [auth.user?.id]);
 
+  // Keep a live ref to the auth context so the callback doesn't have to take
+  // `auth` as a dependency. Re-creating the callback whenever the context
+  // value changed was the second source of the update-depth loop: every
+  // dispatch in AuthContext produced a new `auth` reference, which produced
+  // a new `ensureChessAuth` reference, which retriggered the effect below.
+  const authRef = useRef(auth);
+  useEffect(() => {
+    authRef.current = auth;
+  }, [auth]);
+
   const ensureChessAuth = useCallback(async () => {
-    if (auth.user || !privyReady || !privyUser || isSyncingChessAuthRef.current) {
-      return Boolean(auth.user);
+    const currentAuth = authRef.current;
+    if (currentAuth.user || !privyReady || !privyUser || isSyncingChessAuthRef.current) {
+      return Boolean(currentAuth.user);
     }
 
     const emailFromPrivy = getPrivyEmail(privyUser);
@@ -819,7 +842,7 @@ export function ArcadeCenterScreen() {
         password: 'test1234@',
       });
       await saveStoredUser(result.user);
-      await auth.login({ email: emailFromPrivy, password: 'test1234@' });
+      await authRef.current.login({ email: emailFromPrivy, password: 'test1234@' });
       return true;
     } catch (error) {
       console.log('Chess auth sync failed:', error);
@@ -827,11 +850,12 @@ export function ArcadeCenterScreen() {
     } finally {
       isSyncingChessAuthRef.current = false;
     }
-  }, [auth, privyReady, privyUser]);
+  }, [privyReady, privyUser]);
 
   useEffect(() => {
+    if (auth.user) return;
     void ensureChessAuth();
-  }, [ensureChessAuth]);
+  }, [auth.user, ensureChessAuth]);
 
   const handleToggle = (next: boolean) => {
     setReactiveOn(next);

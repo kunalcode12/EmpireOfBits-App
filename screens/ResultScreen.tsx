@@ -1,6 +1,7 @@
-import React from 'react';
+import { useEmbeddedSolanaWallet } from '@privy-io/expo';
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { formatClock } from '../hooks/useTimer';
 import { useGame } from '../store/GameContext';
@@ -39,8 +40,50 @@ const ROW_CONFIGS = [
 
 export function ResultScreen() {
   const game = useGame();
+  const solanaWallet = useEmbeddedSolanaWallet();
   const result = game.result;
   const headline = result?.result === 'win' ? 'You Won!' : result?.result === 'lose' ? 'You Lost' : 'Draw';
+  const ratingDelta = result?.ratingChange;
+  const hasRatingUpdate = typeof result?.newRating === 'number' && typeof ratingDelta === 'number';
+  const ratingDeltaText =
+    typeof ratingDelta === 'number' ? `${ratingDelta > 0 ? '+' : ''}${ratingDelta}` : null;
+  const [signing, setSigning] = useState(false);
+  const [signedPayload, setSignedPayload] = useState<string | null>(null);
+  const [signError, setSignError] = useState<string | null>(null);
+  const ratingMessage = useMemo(() => {
+    if (typeof result?.newRating !== 'number') return null;
+    return `Empire of Bits rating update: ${result.newRating}`;
+  }, [result?.newRating]);
+
+  const onSignRating = async () => {
+    if (!ratingMessage || signing) return;
+    setSigning(true);
+    setSignError(null);
+    const startedAt = Date.now();
+    try {
+      if (solanaWallet.status !== 'connected' || !solanaWallet.wallets?.[0]) {
+        throw new Error('Embedded wallet is not connected.');
+      }
+      const provider = await solanaWallet.wallets[0].getProvider();
+      const signResult = await provider.request({
+        method: 'signMessage',
+        params: { message: ratingMessage },
+      });
+      const elapsed = Date.now() - startedAt;
+      const minLoaderMs = 1200;
+      if (elapsed < minLoaderMs) {
+        await new Promise((resolve) => setTimeout(resolve, minLoaderMs - elapsed));
+      }
+      setSignedPayload(
+        typeof signResult === 'string' ? signResult : JSON.stringify(signResult),
+      );
+    } catch (error) {
+      setSignError(error instanceof Error ? error.message : 'Signing failed.');
+    } finally {
+      setSigning(false);
+    }
+  };
+
   const handleHomePress = async () => {
     await Promise.resolve(game.resetGame());
     router.push('/(tabs)/play');
@@ -56,6 +99,32 @@ export function ResultScreen() {
         <Stat label="Moves" value={String(result?.moves ?? game.moves.length)} />
         <Stat label="Duration" value={formatClock(result?.durationSeconds ?? 0)} />
       </View>
+      {hasRatingUpdate ? (
+        <View style={styles.ratingCard}>
+          <Text style={styles.ratingTitle}>Rating Update</Text>
+          <Text style={styles.ratingValue}>{result?.newRating}</Text>
+          <Text style={[styles.ratingDelta, (ratingDelta ?? 0) >= 0 ? styles.ratingDeltaUp : styles.ratingDeltaDown]}>
+            {ratingDeltaText}
+          </Text>
+          {ratingMessage ? <Text style={styles.signMessage}>{ratingMessage}</Text> : null}
+          <Pressable style={styles.signButton} onPress={() => void onSignRating()} disabled={signing}>
+            {signing ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <Text style={styles.signButtonText}>Sign Rating</Text>
+            )}
+          </Pressable>
+          {signedPayload ? (
+            <>
+              <Text style={styles.signatureLabel}>Signed Message</Text>
+              <Text style={styles.signatureValue} numberOfLines={3}>
+                {signedPayload}
+              </Text>
+            </>
+          ) : null}
+          {signError ? <Text style={styles.signError}>{signError}</Text> : null}
+        </View>
+      ) : null}
       <Pressable style={styles.primary} onPress={game.resetGame}>
         <Text style={styles.primaryText}>Play Again</Text>
       </Pressable>
@@ -143,6 +212,78 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
     marginBottom: spacing.xl,
+  },
+  ratingCard: {
+    width: '100%',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    padding: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  ratingTitle: {
+    color: colors.subtleText,
+    fontSize: typography.small,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  ratingValue: {
+    color: colors.text,
+    fontSize: typography.title,
+    fontWeight: '900',
+  },
+  ratingDelta: {
+    fontSize: typography.body,
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  ratingDeltaUp: {
+    color: '#8fd36d',
+  },
+  ratingDeltaDown: {
+    color: '#ff9b9b',
+  },
+  signMessage: {
+    color: colors.mutedText,
+    fontSize: typography.small,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  signButton: {
+    minWidth: 160,
+    minHeight: 42,
+    borderRadius: radii.sm,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  signButtonText: {
+    color: colors.text,
+    fontSize: typography.body,
+    fontWeight: '900',
+  },
+  signatureLabel: {
+    color: colors.subtleText,
+    fontSize: typography.small,
+    fontWeight: '800',
+    marginTop: spacing.md,
+  },
+  signatureValue: {
+    color: colors.mutedText,
+    fontSize: typography.tiny,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  signError: {
+    color: colors.warning,
+    fontSize: typography.small,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    fontWeight: '700',
   },
   stat: {
     minWidth: 112,

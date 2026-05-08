@@ -46,6 +46,7 @@ model User {
   googleId String?
   chessLevel ChessLevel
   points Int @default(100)
+  rating Int @default(800)
   gamesWon Game[] @relation("GamesWon")
   gamesLost Game[] @relation("GamesLost")
   createdRooms Room[] @relation("CreatedRooms")
@@ -77,9 +78,13 @@ model Game {
   loser User? @relation("GamesLost", references: [id],fields: [loserId])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt 
-  endedAt DateTime? 
+  endedAt DateTime?
   capturedPieces String[] @default([])
   status GameStatus @default(ACTIVE)
+  whiteRatingBefore Int?
+  blackRatingBefore Int?
+  whiteRatingAfter  Int?
+  blackRatingAfter  Int?
 
 }
 

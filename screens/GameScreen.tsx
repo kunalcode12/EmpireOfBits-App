@@ -72,6 +72,8 @@ export function GameScreen() {
   const orientation: Color = game.color ?? 'w';
   const myName = auth.user?.username ?? 'You';
   const opponentName = game.opponentName ?? 'Opponent';
+  const myRating = game.playerRating;
+  const opponentRating = game.opponentRating;
   const ownSeconds = orientation === 'w' ? game.timers.white : game.timers.black;
   const opponentSeconds = orientation === 'w' ? game.timers.black : game.timers.white;
   const ownActive = game.turn === orientation;
@@ -210,6 +212,7 @@ export function GameScreen() {
           <View>
             <Text style={styles.playerLabel}>Opponent</Text>
             <Text style={styles.nameLabel}>{opponentName}</Text>
+            {typeof opponentRating === 'number' ? <Text style={styles.ratingLabel}>Rating: {opponentRating}</Text> : null}
             <Text style={styles.status}>{opponentActive ? 'Thinking' : 'Waiting'}</Text>
           </View>
           <Timer seconds={opponentSeconds} label={orientation === 'w' ? 'Black' : 'White'} active={opponentActive} />
@@ -232,6 +235,7 @@ export function GameScreen() {
           <View>
             <Text style={styles.playerLabel}>You</Text>
             <Text style={styles.nameLabel}>{myName}</Text>
+            {typeof myRating === 'number' ? <Text style={styles.ratingLabel}>Rating: {myRating}</Text> : null}
             <Text style={[styles.status, ownActive && styles.activeStatus]}>{ownActive ? 'Your move' : 'Opponent turn'}</Text>
           </View>
           <Timer seconds={ownSeconds} label={orientation === 'w' ? 'White' : 'Black'} active={ownActive} />
@@ -626,6 +630,12 @@ const styles = StyleSheet.create({
     color: colors.subtleText,
     fontSize: typography.small,
     fontWeight: '700',
+    marginTop: 1,
+  },
+  ratingLabel: {
+    color: '#d7c6a1',
+    fontSize: typography.tiny,
+    fontWeight: '800',
     marginTop: 1,
   },
   status: {

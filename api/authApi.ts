@@ -25,6 +25,13 @@ export interface AuthResponse extends StoredUser {
   points: number;
 }
 
+export interface UserRatingResponse {
+  success: boolean;
+  userId: number;
+  username: string;
+  rating: number;
+}
+
 type HeadersWithCookie = Headers & {
   getSetCookie?: () => string[];
 };
@@ -173,6 +180,13 @@ export const getUserPoints = async (): Promise<number> => {
   return response.points;
 };
 
+export const getUserRatingById = async (userId: number): Promise<number> => {
+  const response = await request<UserRatingResponse>(`/api/v1/user/${userId}/rating`, {
+    method: "GET",
+  });
+  return Number(response.rating);
+};
+
 export interface UpdateUserPointsResponse extends UserPointsResponse {
   delta: number;
 }
@@ -214,6 +228,7 @@ export interface UserProfileResponse {
       email: string;
       chessLevel: "BEGINNER" | "INTERMEDIATE" | "PRO";
       points: number;
+      rating?: number;
     };
     stats: {
       computer: UserProfileStatsBucket;

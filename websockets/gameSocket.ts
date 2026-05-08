@@ -42,6 +42,10 @@ export interface InitRoomPayload {
   capturedPieces?: string[];
   opponentName?: string | null;
   playerName?: string | null;
+  playerRating?: number;
+  opponentRating?: number;
+  whiteRating?: number;
+  blackRating?: number;
   chat?: RoomChatMessage[];
 }
 
@@ -56,6 +60,7 @@ export interface MovePayload {
 export interface TimerPayload {
   whiteTimer: number;
   blackTimer: number;
+  roomGameId?: number;
 }
 
 export interface GameOverPayload {
@@ -66,6 +71,12 @@ export interface GameOverPayload {
   loser?: string | number;
   roomStatus?: string;
   gameStatus?: string;
+}
+
+export interface RatingUpdatePayload {
+  yourNewRating: number;
+  ratingChange: number;
+  opponentNewRating: number;
 }
 
 export interface RoomChatMessage {

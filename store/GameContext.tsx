@@ -19,6 +19,7 @@ import {
     type GameOverPayload,
     type InitRoomPayload,
     type MovePayload,
+    type RatingUpdatePayload,
     type RoomChatMessage,
     type TimeControl,
 } from '../websockets/gameSocket';
@@ -37,6 +38,9 @@ export interface GameResult {
   message?: string;
   moves: number;
   durationSeconds: number;
+  ratingChange?: number;
+  newRating?: number;
+  opponentNewRating?: number;
 }
 
 interface GameState {
@@ -48,6 +52,8 @@ interface GameState {
   color: Color | null;
   opponentId: number | null;
   opponentName: string | null;
+  playerRating: number | null;
+  opponentRating: number | null;
   fen: string;
   turn: Color;
   timers: Timers;
@@ -73,7 +79,7 @@ type GameAction =
   | { type: 'QUEUE_CANCELLED' }
   | { type: 'INIT_GAME'; payload: InitRoomPayload }
   | { type: 'MOVE_APPLIED'; payload: MovePayload }
-  | { type: 'TIMER'; timers: Timers }
+  | { type: 'TIMER'; timers: Timers; roomGameId?: number }
   | { type: 'CHECK'; message: string }
   | { type: 'CLEAR_CHECK_ALERT' }
   | { type: 'DRAW_OFFER' }
@@ -82,6 +88,7 @@ type GameAction =
   | { type: 'OPP_DISCONNECTED'; message: string }
   | { type: 'CHAT_MESSAGE'; message: RoomChatMessage }
   | { type: 'GAME_OVER'; payload: GameOverPayload }
+  | { type: 'RATING_UPDATE'; payload: RatingUpdatePayload }
   | { type: 'TOAST'; message: string | null }
   | { type: 'RESET' };
 
@@ -96,6 +103,8 @@ const initialState: GameState = {
   color: null,
   opponentId: null,
   opponentName: null,
+  playerRating: null,
+  opponentRating: null,
   fen: startFen,
   turn: 'w',
   timers: { white: 300, black: 300 },
@@ -174,6 +183,8 @@ const reducer = (state: GameState, action: GameAction): GameState => {
         roomGameId: String(action.payload.roomGameId ?? action.payload.gameId),
         opponentId: action.payload.opponentId,
         opponentName: action.payload.opponentName ?? null,
+        playerRating: typeof action.payload.playerRating === 'number' ? action.payload.playerRating : state.playerRating,
+        opponentRating: typeof action.payload.opponentRating === 'number' ? action.payload.opponentRating : state.opponentRating,
         fen: action.payload.fen,
         turn: parseFen(action.payload.fen).turn,
         timers: { white: Number(action.payload.whiteTimer), black: Number(action.payload.blackTimer) },
@@ -233,6 +244,13 @@ const reducer = (state: GameState, action: GameAction): GameState => {
     }
     case 'TIMER':
       if (state.phase !== 'active') return state;
+      if (
+        typeof action.roomGameId === 'number' &&
+        state.roomGameId &&
+        action.roomGameId !== Number(state.roomGameId)
+      ) {
+        return state;
+      }
       return { ...state, timers: action.timers };
     case 'CHECK':
       return {
@@ -265,10 +283,30 @@ const reducer = (state: GameState, action: GameAction): GameState => {
       };
       return { ...state, phase: 'finished', result, drawOfferIncoming: false, opponentDisconnected: false, toast: action.payload.message ?? null };
     }
+    case 'RATING_UPDATE': {
+      const nextResult = state.result
+        ? {
+            ...state.result,
+            ratingChange: action.payload.ratingChange,
+            newRating: action.payload.yourNewRating,
+            opponentNewRating: action.payload.opponentNewRating,
+          }
+        : state.result;
+      return {
+        ...state,
+        playerRating: action.payload.yourNewRating,
+        opponentRating: action.payload.opponentNewRating,
+        result: nextResult,
+      };
+    }
     case 'TOAST':
       return { ...state, toast: action.message };
     case 'RESET':
-      return { ...initialState, socketStatus: state.socketStatus };
+      return {
+        ...initialState,
+        socketStatus: state.socketStatus,
+        playerRating: state.playerRating,
+      };
     default:
       return state;
   }
@@ -309,8 +347,18 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
             dispatch({ type: 'MOVE_APPLIED', payload: message.payload as MovePayload });
             break;
           case RoomSocketEvents.ROOM_TIMER_UPDATE:
+            if (
+              !Number.isFinite(Number(payloadRecord.whiteTimer)) ||
+              !Number.isFinite(Number(payloadRecord.blackTimer))
+            ) {
+              break;
+            }
             dispatch({
               type: 'TIMER',
+              roomGameId:
+                typeof payloadRecord.roomGameId === 'number'
+                  ? payloadRecord.roomGameId
+                  : undefined,
               timers: { white: Number(payloadRecord.whiteTimer ?? 0), black: Number(payloadRecord.blackTimer ?? 0) },
             });
             break;
@@ -336,6 +384,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
           case RoomSocketEvents.ROOM_GAME_OVER:
             dispatch({ type: 'GAME_OVER', payload: message.payload as GameOverPayload });
             void clearActiveGameId();
+            break;
+          case 'RATING_UPDATE':
+            dispatch({ type: 'RATING_UPDATE', payload: message.payload as RatingUpdatePayload });
             break;
           case RoomSocketEvents.ROOM_LEFT:
             dispatch({

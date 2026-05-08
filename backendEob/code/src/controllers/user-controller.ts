@@ -1,16 +1,3 @@
-import express, { Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
-import { z } from 'zod';
-import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
-import pc from '../clients/prismaClient';
-import { authMiddleware } from '../middleware';
-const router = express.Router();
-import { nanoid } from 'nanoid';
-import { redis } from '../clients/redisClient';
-import { roomManager } from '../Classes/RoomManager';
-import { addGuestGamesToUserProfile } from '../utils/chessUtils';
-import { removePlayerFromQueue } from '../Services/MatchMaking';
 import {
   Connection,
   Keypair,
@@ -20,6 +7,17 @@ import {
   Transaction,
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
+import bcrypt from 'bcryptjs';
+import express, { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
+import pc from '../clients/prismaClient';
+import { redis } from '../clients/redisClient';
+import { authMiddleware } from '../middleware';
+import { removePlayerFromQueue } from '../Services/MatchMaking';
+import { addGuestGamesToUserProfile } from '../utils/chessUtils';
+const router = express.Router();
 
 export enum ChessLevel {
   BEGINNER,
@@ -212,6 +210,7 @@ router.get('/profile', authMiddleware, async (req: Request, res: Response) => {
         email: true,
         chessLevel: true,
         points: true,
+        rating: true,
         computerGames: {
           orderBy: { createdAt: 'desc' },
         },
@@ -419,6 +418,7 @@ router.get('/profile', authMiddleware, async (req: Request, res: Response) => {
         chessLevel: user.chessLevel,
         email: user.email,
         points: user.points,
+        rating: user.rating,
       },
       stats,
       totalTimePlayed: totalTimePlayed,
@@ -884,4 +884,36 @@ router.post(
 
 // router.patch()
 
+// GET /api/v1/user/:id/rating — public rating lookup for any user.
+router.get('/:id/rating', async (req: Request, res: Response) => {
+  try {
+    const idNum = Number(req.params.id);
+    if (!Number.isFinite(idNum) || idNum <= 0) {
+      res.status(400).json({ success: false, message: 'Invalid user id' });
+      return;
+    }
+
+    const user = await pc.user.findUnique({
+      where: { id: idNum },
+      select: { id: true, name: true, rating: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      userId: user.id,
+      username: user.name,
+      rating: user.rating,
+    });
+  } catch (error) {
+    console.error('Get user rating error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 export { router };
+

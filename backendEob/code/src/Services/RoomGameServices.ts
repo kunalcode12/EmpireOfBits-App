@@ -9,6 +9,10 @@ import provideValidMoves, {
   parseMoves,
   sendMessage,
 } from '../utils/chessUtils';
+import {
+  applyRatingsForRoomGame,
+  type RoomGameResult,
+} from '../utils/eloUtils';
 import { ErrorMessages, GameMessages, RoomMessages } from '../utils/messages';
 import { Move } from './GameServices';
 
@@ -182,7 +186,8 @@ export async function handleRoomMove(
       userSocket,
       opponentSocket,
       gameId,
-      'Draw by stalemate'
+      'Draw by stalemate',
+      socketManager
     );
     return;
   } else if (chess.isInsufficientMaterial()) {
@@ -190,7 +195,8 @@ export async function handleRoomMove(
       userSocket,
       opponentSocket,
       gameId,
-      'Draw due to insufficient material'
+      'Draw due to insufficient material',
+      socketManager
     );
     return;
   } else if (chess.isThreefoldRepetition()) {
@@ -198,7 +204,8 @@ export async function handleRoomMove(
       userSocket,
       opponentSocket,
       gameId,
-      'Draw by threefold repetition'
+      'Draw by threefold repetition',
+      socketManager
     );
     return;
   } else if (chess.isDraw()) {
@@ -206,7 +213,8 @@ export async function handleRoomMove(
       userSocket,
       opponentSocket,
       gameId,
-      'Draw by 50-move rule'
+      'Draw by 50-move rule',
+      socketManager
     );
     return;
   }
@@ -293,6 +301,20 @@ export async function handleRoomMove(
       })
     );
 
+    // Elo rating update — runs AFTER the game-over messages.
+    // Failure here must not roll back the game outcome.
+    const ratingResult: RoomGameResult =
+      winnerColor === 'w' ? 'white_wins' : 'black_wins';
+    applyRatingsForRoomGame({
+      gameId,
+      whiteUserId: existingGame.user1,
+      blackUserId: existingGame.user2,
+      result: ratingResult,
+      socketManager,
+    }).catch((err) =>
+      console.error(`[Elo] checkmate rating update failed for game ${gameId}:`, err),
+    );
+
     return;
   }
 
@@ -314,7 +336,8 @@ export async function handleRoomDraw(
   userSocket: WebSocket,
   opponentSocket: WebSocket | undefined,
   gameId: number,
-  reason: string
+  reason: string,
+  socketManager?: Map<number, WebSocket>
 ): Promise<void> {
   try {
     const message = JSON.stringify({
@@ -372,6 +395,26 @@ export async function handleRoomDraw(
     console.log(
       `GameDraw ${gameId}: ${reason} - Chat messages saved: ${final_chat.length}`
     );
+
+    // Elo rating update for the draw — broadcast AFTER the draw message.
+    const whiteUserId = Number(gameData.user1);
+    const blackUserId = Number(gameData.user2);
+    if (
+      Number.isFinite(whiteUserId) &&
+      Number.isFinite(blackUserId) &&
+      whiteUserId > 0 &&
+      blackUserId > 0
+    ) {
+      applyRatingsForRoomGame({
+        gameId,
+        whiteUserId,
+        blackUserId,
+        result: 'draw',
+        socketManager,
+      }).catch((err) =>
+        console.error(`[Elo] draw rating update failed for game ${gameId}:`, err),
+      );
+    }
   } catch (error) {
     console.error(`Error handling draw for game ${gameId}:`, error);
   }
@@ -886,6 +929,31 @@ export async function handleRoomGameLeave(
     );
     console.log(`[Room Game Leave] user ${userId} resigned from game ${gameId}`);
 
+    // Elo rating update for resignation — winner is the non-resigning user.
+    const whiteUserId = room.createdById;
+    const blackUserId = room.joinedById;
+    if (
+      typeof whiteUserId === 'number' &&
+      typeof blackUserId === 'number' &&
+      whiteUserId > 0 &&
+      blackUserId > 0
+    ) {
+      const resignResult: RoomGameResult =
+        userId === whiteUserId ? 'black_wins' : 'white_wins';
+      applyRatingsForRoomGame({
+        gameId,
+        whiteUserId,
+        blackUserId,
+        result: resignResult,
+        socketManager,
+      }).catch((err) =>
+        console.error(
+          `[Elo] resignation rating update failed for game ${gameId}:`,
+          err,
+        ),
+      );
+    }
+
     await redis
       .multi()
       .sRem('room-active-games', gameId.toString())
@@ -1208,7 +1276,8 @@ export async function handleRoomDrawAcceptance(
       userSocket,
       opponentSocket,
       gameId,
-      'Draw agreed by both players'
+      'Draw agreed by both players',
+      socketManager
     );
   } catch (error) {
     console.error('Error handling room draw acceptance:', error);

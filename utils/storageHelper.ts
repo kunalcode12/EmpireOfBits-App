@@ -10,6 +10,7 @@ export interface StoredUser {
   username: string;
   email: string;
   chessLevel: 'BEGINNER' | 'INTERMEDIATE' | 'PRO';
+  rating?: number;
   isGuest: false;
 }
 

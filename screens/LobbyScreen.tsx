@@ -1,8 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { getUserRatingById } from '../api/authApi';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { useAuth } from '../store/AuthContext';
 import { useGame } from '../store/GameContext';
@@ -66,9 +67,34 @@ export function LobbyScreen() {
   const [timeControl, setTimeControl] = useState<TimeControl | null>('5');
   const [colorPreference, setColorPreference] = useState<ColorPreference | null>('w');
   const [timeModalOpen, setTimeModalOpen] = useState(false);
+  const [playerRating, setPlayerRating] = useState<number | null>(game.playerRating);
   const ready = Boolean(timeControl && colorPreference);
   const timeLabel = timeControl === '10' ? '10 min' : '5 min';
   const timeIcon = timeControl === '10' ? 'clock-time-five' : 'lightning-bolt';
+
+  useEffect(() => {
+    let mounted = true;
+    const userId = auth.user?.id;
+    if (!userId) return undefined;
+    const loadRating = async () => {
+      try {
+        const rating = await getUserRatingById(userId);
+        if (mounted) setPlayerRating(rating);
+      } catch {
+        if (mounted && typeof game.playerRating === 'number') {
+          setPlayerRating(game.playerRating);
+        }
+      }
+    };
+    void loadRating();
+    return () => {
+      mounted = false;
+    };
+  }, [auth.user?.id, game.playerRating]);
+
+  useEffect(() => {
+    if (typeof game.playerRating === 'number') setPlayerRating(game.playerRating);
+  }, [game.playerRating]);
 
   return (
     <View style={styles.screen}>
@@ -81,6 +107,9 @@ export function LobbyScreen() {
             <View>
               <Text style={styles.eyebrow}>Signed in as</Text>
               <Text style={styles.title}>{auth.user?.username ?? 'Player'}</Text>
+              {typeof playerRating === 'number' ? (
+                <Text style={styles.ratingText}>Rating: {playerRating}</Text>
+              ) : null}
             </View>
             <Pressable style={styles.backButton} onPress={() => router.back()}>
               <MaterialCommunityIcons name="arrow-left" size={16} color={colors.mutedText} />
@@ -253,6 +282,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: typography.title,
     fontWeight: '900',
+  },
+  ratingText: {
+    color: colors.mutedText,
+    fontSize: typography.small,
+    fontWeight: '800',
+    marginTop: 2,
   },
   backButton: {
     borderRadius: radii.sm,

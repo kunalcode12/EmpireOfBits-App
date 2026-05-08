@@ -4,9 +4,9 @@ import WebSocket from 'ws';
 import pc from '../clients/prismaClient';
 import { redis } from '../clients/redisClient';
 import {
-  MatchmakingPreferences,
   insertPlayerInQueue,
   matchingPlayer,
+  MatchmakingPreferences,
   removePlayerFromQueue
 } from '../Services/MatchMaking';
 import {
@@ -20,6 +20,11 @@ import {
   handleRoomTakeback
 } from '../Services/RoomGameServices';
 import provideValidMoves, { parseChat } from '../utils/chessUtils';
+import {
+  applyRatingsForRoomGame,
+  DEFAULT_RATING,
+  type RoomGameResult,
+} from '../utils/eloUtils';
 import { ErrorMessages, GameMessages, RoomMessages } from '../utils/messages';
 
 interface RestoredGameState {
@@ -107,8 +112,17 @@ class RoomManager {
 
   async startRoomTimer() {
     if (this.globalRoomClock) return;
-    
+
+    // Re-entrancy guard. setInterval fires every 1 s regardless of whether the
+    // previous callback finished, and on a remote Redis (Upstash) a single tick
+    // can take longer than 1 s. Without this guard two ticks can run in
+    // parallel and each calls hIncrBy(-1) → the clock jumps by 2 (or more) per
+    // wall-clock second, which is what the "random times" symptom looks like.
+    let tickInFlight = false;
+
     this.globalRoomClock = setInterval(async () => {
+      if (tickInFlight) return;
+      tickInFlight = true;
       try {
         const activeRoomGames = await redis.sMembers('room-active-games');
         if (!activeRoomGames || activeRoomGames.length === 0) {
@@ -142,7 +156,7 @@ class RoomManager {
           const blackPlayerId = Number(game.user2);
           const timerMessage = JSON.stringify({
             type: RoomMessages.ROOM_TIMER_UPDATE,
-            payload: { whiteTimer, blackTimer }
+            payload: { whiteTimer, blackTimer, roomGameId: Number(gameId) }
           });
 
           this.roomSocketManager.get(whitePlayerId)?.send(timerMessage);
@@ -154,6 +168,8 @@ class RoomManager {
         }
       } catch (error) {
         console.error('Error in room timer:', error);
+      } finally {
+        tickInFlight = false;
       }
     }, 1000);
   }
@@ -220,6 +236,31 @@ class RoomManager {
       const loserSocket = this.roomSocketManager.get(loserId);
       if (winnerSocket && winnerSocket.readyState === WebSocket.OPEN) winnerSocket.send(gameOverMsg('win', '🎉 You won! Your opponent ran out of time.'));
       if (loserSocket && loserSocket.readyState === WebSocket.OPEN) loserSocket.send(gameOverMsg('lose', "⏱️ Time's up! You lost on time."));
+
+      // Elo rating update — broadcast AFTER ROOM_GAME_OVER messages.
+      const whiteUserId = Number(game.user1);
+      const blackUserId = Number(game.user2);
+      if (
+        Number.isFinite(whiteUserId) &&
+        Number.isFinite(blackUserId) &&
+        whiteUserId > 0 &&
+        blackUserId > 0
+      ) {
+        const result: RoomGameResult =
+          winnerColor === 'w' ? 'white_wins' : 'black_wins';
+        applyRatingsForRoomGame({
+          gameId: Number(gameId),
+          whiteUserId,
+          blackUserId,
+          result,
+          socketManager: this.roomSocketManager,
+        }).catch((err) =>
+          console.error(
+            `[Elo] timeout rating update failed for game ${gameId}:`,
+            err,
+          ),
+        );
+      }
     } catch (error) {
       console.error('Error handling time expiration:', error);
     }
@@ -275,7 +316,28 @@ class RoomManager {
              return;
           }
 
-          const prefs: MatchmakingPreferences = { timeControl, colorPreference, isGuest: false };
+          let userRating = DEFAULT_RATING;
+          try {
+            const me = await pc.user.findUnique({
+              where: { id: userId },
+              select: { rating: true },
+            });
+            if (me && typeof me.rating === 'number') {
+              userRating = me.rating;
+            }
+          } catch (ratingFetchErr) {
+            console.error(
+              'Failed to fetch user rating for matchmaking, using default:',
+              ratingFetchErr,
+            );
+          }
+
+          const prefs: MatchmakingPreferences = {
+            timeControl,
+            colorPreference,
+            isGuest: false,
+            rating: userRating,
+          };
           let match = await matchingPlayer(userId.toString(), prefs);
 
           if (!match) {
@@ -300,6 +362,17 @@ class RoomManager {
           const timeLimit = parseInt(timeControl) * 60;
           const roomCode = nanoid();
 
+          const matchedUsers = await pc.user.findMany({
+            where: { id: { in: [whiteId, blackId] } },
+            select: { id: true, name: true, rating: true },
+          });
+          const nameById = new Map(matchedUsers.map((user) => [user.id, user.name]));
+          const ratingById = new Map(
+            matchedUsers.map((user) => [user.id, user.rating ?? DEFAULT_RATING]),
+          );
+          const whiteRating = ratingById.get(whiteId) ?? DEFAULT_RATING;
+          const blackRating = ratingById.get(blackId) ?? DEFAULT_RATING;
+
           const newRoom = await pc.room.create({
             data: {
               code: roomCode,
@@ -317,15 +390,11 @@ class RoomManager {
               blackTimeLeft: timeLimit,
               type: 'RANDOM',
               status: 'ACTIVE',
-              lastMoveAt: new Date()
+              lastMoveAt: new Date(),
+              whiteRatingBefore: whiteRating,
+              blackRatingBefore: blackRating,
             }
           });
-
-          const matchedUsers = await pc.user.findMany({
-            where: { id: { in: [whiteId, blackId] } },
-            select: { id: true, name: true },
-          });
-          const nameById = new Map(matchedUsers.map((user) => [user.id, user.name]));
 
           await redis.multi()
             .hSet(`room-game:${newGame.id}`, {
@@ -349,6 +418,10 @@ class RoomManager {
               opponentId: oppId,
               opponentName: nameById.get(oppId) ?? null,
               playerName: nameById.get(playerId) ?? null,
+              playerRating: ratingById.get(playerId) ?? DEFAULT_RATING,
+              opponentRating: ratingById.get(oppId) ?? DEFAULT_RATING,
+              whiteRating,
+              blackRating,
               roomGameId: newGame.id,
               validMoves: color === 'w' ? provideValidMoves(chess.fen()) : []
             }
