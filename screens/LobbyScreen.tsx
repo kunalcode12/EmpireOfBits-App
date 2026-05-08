@@ -2,12 +2,17 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getUserRatingById } from '../api/authApi';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { useAuth } from '../store/AuthContext';
 import { useGame } from '../store/GameContext';
+import { loadReactiveSnapshot } from '../utils/reactiveStorageHelper';
 import type { ColorPreference, TimeControl } from '../websockets/gameSocket';
+
+// ─── Reactive (read-only mirror of ArcadeCenterScreen state) ─────────────────
+const REACTIVE_PINK = '#FF006E';
+const REACTIVE_CYAN = '#00F5FF';
 
 // Elder Futhark rune mappings for "EMPIRE OF BITS"
 const RUNE_MAP: Record<string, string> = {
@@ -72,6 +77,58 @@ export function LobbyScreen() {
   const timeLabel = timeControl === '10' ? '10 min' : '5 min';
   const timeIcon = timeControl === '10' ? 'clock-time-five' : 'lightning-bolt';
 
+  // ─── Reactive arcade mirror (purely additive — read-only from storage) ────
+  const [reactiveOn, setReactiveOn] = useState(false);
+  const [twitchHandle, setTwitchHandle] = useState<string | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      try {
+        const snap = await loadReactiveSnapshot();
+        if (!mounted) return;
+        const sessionLive = Boolean(snap.enabled && snap.accessToken && snap.user);
+        setReactiveOn(sessionLive);
+        if (snap.streamUrl) {
+          const m = snap.streamUrl.match(/twitch\.tv\/([a-zA-Z0-9_]+)/);
+          setTwitchHandle(m ? m[1] : snap.streamUrl);
+        }
+      } catch {
+        // ignore — reactive UI just won't render
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const reactivePulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!reactiveOn) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(reactivePulse, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: false,
+        }),
+        Animated.timing(reactivePulse, {
+          toValue: 0,
+          duration: 1200,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: false,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [reactiveOn, reactivePulse]);
+
+  const reactiveDotOpacity = reactivePulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.55, 1],
+  });
+
   useEffect(() => {
     let mounted = true;
     const userId = auth.user?.id;
@@ -104,18 +161,46 @@ export function LobbyScreen() {
       <View ref={blurTargetRef} style={styles.screenContent}>
         <View style={styles.topContent}>
           <View style={styles.header}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.eyebrow}>Signed in as</Text>
               <Text style={styles.title}>{auth.user?.username ?? 'Player'}</Text>
-              {typeof playerRating === 'number' ? (
-                <Text style={styles.ratingText}>Rating: {playerRating}</Text>
-              ) : null}
+              <View style={styles.headerMetaRow}>
+                <View style={styles.ratingChip}>
+                  <View style={styles.ratingChipGlow} pointerEvents="none" />
+                  <MaterialCommunityIcons name="trophy-variant" size={14} color="#f6c849" />
+                  <Text style={styles.ratingChipLabel}>RATING</Text>
+                  <Text style={styles.ratingChipValue}>
+                    {typeof playerRating === 'number' ? playerRating : '--'}
+                  </Text>
+                </View>
+                {reactiveOn && twitchHandle ? (
+                  <View style={styles.twitchChip}>
+                    <MaterialCommunityIcons name="twitch" size={13} color={REACTIVE_PINK} />
+                    <Text style={styles.twitchChipText} numberOfLines={1}>
+                      @{twitchHandle}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
             </View>
             <Pressable style={styles.backButton} onPress={() => router.back()}>
               <MaterialCommunityIcons name="arrow-left" size={16} color={colors.mutedText} />
               <Text style={styles.backButtonText}>Back</Text>
             </Pressable>
           </View>
+
+          {reactiveOn && (
+            <View style={styles.reactiveBanner}>
+              <Animated.View style={[styles.reactiveBannerDot, { opacity: reactiveDotOpacity }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.reactiveBannerTitle}>REACTIVE SESSION</Text>
+                <Text style={styles.reactiveBannerSub}>
+                  Viewers can drop pixel-events into this match.
+                </Text>
+              </View>
+              <MaterialCommunityIcons name="twitch" size={18} color={REACTIVE_PINK} />
+            </View>
+          )}
           <View style={styles.section}>
             <View style={styles.options}>
               <Pressable style={[styles.selectorRow, styles.timeRow]} onPress={() => setTimeModalOpen(true)}>
@@ -176,12 +261,19 @@ export function LobbyScreen() {
         <View style={styles.playFooter}>
           <Pressable
             disabled={!ready}
-            style={[styles.play, !ready && styles.disabled]}
+            style={[styles.play, reactiveOn && styles.playReactive, !ready && styles.disabled]}
             onPress={() => {
               if (timeControl && colorPreference) void game.startMatchmaking(timeControl, colorPreference);
             }}
           >
-            <Text style={styles.playText}>Play</Text>
+            {reactiveOn ? (
+              <View style={styles.playReactiveInner}>
+                <MaterialCommunityIcons name="twitch" size={20} color="#fff" />
+                <Text style={styles.playText}>Play Reactive</Text>
+              </View>
+            ) : (
+              <Text style={styles.playText}>Play</Text>
+            )}
           </Pressable>
         </View>
       </View>
@@ -563,5 +655,125 @@ const styles = StyleSheet.create({
   modalOptionText: {
     color: colors.text,
     fontWeight: '800',
+  },
+  headerMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    flexWrap: 'wrap',
+  },
+  ratingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    borderWidth: 1.5,
+    borderColor: 'rgba(246,200,73,0.55)',
+    backgroundColor: 'rgba(246,200,73,0.10)',
+    shadowColor: '#f6c849',
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  ratingChipGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '55%',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  ratingChipLabel: {
+    color: '#f6c849',
+    fontWeight: '900',
+    fontSize: typography.tiny,
+    letterSpacing: 1.4,
+  },
+  ratingChipValue: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.body,
+    letterSpacing: 0.5,
+    marginLeft: 2,
+  },
+  twitchChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.10)',
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    maxWidth: 170,
+  },
+  twitchChipText: {
+    color: REACTIVE_PINK,
+    fontWeight: '800',
+    fontSize: typography.small,
+    letterSpacing: 0.4,
+  },
+  reactiveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.08)',
+    marginBottom: spacing.lg,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveBannerDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: REACTIVE_PINK,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.95,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveBannerTitle: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.small,
+    letterSpacing: 1.4,
+  },
+  reactiveBannerSub: {
+    color: colors.mutedText,
+    fontSize: typography.tiny,
+    letterSpacing: 0.4,
+    marginTop: 1,
+  },
+  playReactive: {
+    backgroundColor: REACTIVE_PINK,
+    shadowColor: REACTIVE_PINK,
+    shadowOpacity: 0.55,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+    borderWidth: 1.5,
+    borderColor: REACTIVE_CYAN,
+  },
+  playReactiveInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
 });

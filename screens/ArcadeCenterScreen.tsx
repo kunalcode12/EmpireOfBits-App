@@ -23,10 +23,23 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getUserPoints, registerOrLogin, sellPoints, updateUserPoints } from '../api/authApi';
+import { getUserProfile, requestOtp, verifyOtp } from '../lib/vorldAuth';
 import { SOLANA_RPC_URL } from '../constants/solana';
 import { useAuth } from '../store/AuthContext';
 import { getPrivyEmail } from '../utils/privyUser';
+import {
+  clearReactiveSessionKeepStreamUrl,
+  loadReactiveSnapshot,
+  saveReactiveEnabled,
+  saveReactiveSession,
+  saveReactiveStreamUrl,
+  type ReactiveVorldProfile,
+  type ReactiveVorldUser,
+} from '../utils/reactiveStorageHelper';
 import { saveStoredUser } from '../utils/storageHelper';
+
+// ─── Reactive Arcade (Vorld) constants ───────────────────────────────────────
+const TWITCH_URL_REGEX = /^https:\/\/(?:www\.)?twitch\.tv\/[a-zA-Z0-9_]{3,25}\/?$/;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -382,6 +395,7 @@ type GameCardProps = {
   locked?: boolean;
   onPress?: () => void;
   pixelLoaded: boolean;
+  reactiveActive?: boolean;
 };
 
 function GameCard({
@@ -393,6 +407,7 @@ function GameCard({
   locked,
   onPress,
   pixelLoaded,
+  reactiveActive,
 }: GameCardProps) {
   const pulse = useRef(new Animated.Value(0)).current;
 
@@ -419,6 +434,10 @@ function GameCard({
   const shadowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.85] });
   const shadowRadius = pulse.interpolate({ inputRange: [0, 1], outputRange: [10, 22] });
 
+  const effectiveBorderColor = reactiveActive && !locked ? HOT_PINK : borderColor;
+  const effectiveGlowColor = reactiveActive && !locked ? HOT_PINK : glowColor;
+  const effectiveStripeColor = reactiveActive && !locked ? HOT_PINK : borderColor;
+
   return (
     <Pressable disabled={locked} onPress={onPress} style={cardStyles.pressableWrap}>
       {({ pressed }) => (
@@ -426,8 +445,8 @@ function GameCard({
           style={[
             cardStyles.outer,
             {
-              borderColor,
-              shadowColor: glowColor,
+              borderColor: effectiveBorderColor,
+              shadowColor: effectiveGlowColor,
               shadowOpacity: locked ? 0 : (shadowOpacity as unknown as number),
               shadowRadius: locked ? 0 : (shadowRadius as unknown as number),
             },
@@ -435,7 +454,7 @@ function GameCard({
             pressed && !locked && cardStyles.outerPressed,
           ]}
         >
-          <View style={[cardStyles.stripe, { backgroundColor: borderColor }]} />
+          <View style={[cardStyles.stripe, { backgroundColor: effectiveStripeColor }]} />
           <View style={cardStyles.illuArea}>{illustration}</View>
           <View style={cardStyles.titleArea}>
             <Text style={pixelLoaded ? cardStyles.titlePixel : cardStyles.titleFallback}>
@@ -447,6 +466,14 @@ function GameCard({
             <View style={cardStyles.comingBadge}>
               <Text style={pixelLoaded ? cardStyles.comingPixel : cardStyles.comingFallback}>
                 COMING SOON
+              </Text>
+            </View>
+          )}
+          {reactiveActive && !locked && (
+            <View style={styles.reactiveBadge}>
+              <View style={styles.reactiveBadgeDot} />
+              <Text style={pixelLoaded ? styles.reactiveBadgeText : styles.reactiveBadgeFallback}>
+                REACTIVE
               </Text>
             </View>
           )}
@@ -472,6 +499,12 @@ function ReactivePanel({
   twitch,
   setTwitch,
   pixelLoaded,
+  busy,
+  errorText,
+  twitchValid,
+  onSendOtp,
+  onVerifyOtp,
+  onLinkAccount,
 }: {
   visible: boolean;
   step: Step;
@@ -484,6 +517,12 @@ function ReactivePanel({
   twitch: string;
   setTwitch: (v: string) => void;
   pixelLoaded: boolean;
+  busy: boolean;
+  errorText: string | null;
+  twitchValid: boolean;
+  onSendOtp: () => void;
+  onVerifyOtp: () => void;
+  onLinkAccount: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const slideY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -529,19 +568,20 @@ function ReactivePanel({
   });
 
   const handleEmailNext = () => {
-    if (!email.trim()) return;
-    onStepChange(1);
+    if (!email.trim() || busy) return;
+    onSendOtp();
   };
   const handleOtpNext = () => {
-    if (otp.length < 4) return;
-    onStepChange(2);
+    if (otp.length < 4 || busy) return;
+    onVerifyOtp();
   };
   const handleLinkAccount = () => {
-    if (!twitch.trim()) return;
-    onClose();
+    if (!twitch.trim() || !twitchValid || busy) return;
+    onLinkAccount();
   };
 
   const handleBack = () => {
+    if (busy) return;
     if (step === 0) onClose();
     else onStepChange((step - 1) as Step);
   };
@@ -618,7 +658,7 @@ function ReactivePanel({
               />
               <Pressable
                 style={panelStyles.ctaWrap}
-                disabled={!email.trim()}
+                disabled={!email.trim() || busy}
                 onPress={handleEmailNext}
               >
                 {({ pressed }) => (
@@ -627,16 +667,25 @@ function ReactivePanel({
                       panelStyles.cta,
                       { borderColor: ELECTRIC_CYAN, shadowColor: ELECTRIC_CYAN },
                       pressed && panelStyles.ctaPressed,
-                      !email.trim() && panelStyles.ctaDisabled,
+                      (!email.trim() || busy) && panelStyles.ctaDisabled,
                     ]}
                   >
-                    <Text style={pixelLoaded ? panelStyles.ctaLabelPixel : panelStyles.ctaLabelFallback}>
-                      SEND CODE
-                    </Text>
-                    <MaterialCommunityIcons name="send-outline" size={16} color="#fff" />
+                    {busy && step === 0 ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Text style={pixelLoaded ? panelStyles.ctaLabelPixel : panelStyles.ctaLabelFallback}>
+                          SEND CODE
+                        </Text>
+                        <MaterialCommunityIcons name="send-outline" size={16} color="#fff" />
+                      </>
+                    )}
                   </View>
                 )}
               </Pressable>
+              {step === 0 && errorText ? (
+                <Text style={panelStyles.errorText}>{errorText}</Text>
+              ) : null}
             </View>
 
             {/* Step 2 — OTP */}
@@ -674,7 +723,7 @@ function ReactivePanel({
               </View>
               <Pressable
                 style={panelStyles.ctaWrap}
-                disabled={otp.length < 4}
+                disabled={otp.length < 4 || busy}
                 onPress={handleOtpNext}
               >
                 {({ pressed }) => (
@@ -683,16 +732,25 @@ function ReactivePanel({
                       panelStyles.cta,
                       { borderColor: NEON_YELLOW, shadowColor: NEON_YELLOW },
                       pressed && panelStyles.ctaPressed,
-                      otp.length < 4 && panelStyles.ctaDisabled,
+                      (otp.length < 4 || busy) && panelStyles.ctaDisabled,
                     ]}
                   >
-                    <Text style={pixelLoaded ? panelStyles.ctaLabelPixel : panelStyles.ctaLabelFallback}>
-                      VERIFY
-                    </Text>
-                    <MaterialCommunityIcons name="shield-check-outline" size={16} color="#fff" />
+                    {busy && step === 1 ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Text style={pixelLoaded ? panelStyles.ctaLabelPixel : panelStyles.ctaLabelFallback}>
+                          VERIFY
+                        </Text>
+                        <MaterialCommunityIcons name="shield-check-outline" size={16} color="#fff" />
+                      </>
+                    )}
                   </View>
                 )}
               </Pressable>
+              {step === 1 && errorText ? (
+                <Text style={panelStyles.errorText}>{errorText}</Text>
+              ) : null}
             </View>
 
             {/* Step 3 — Twitch */}
@@ -706,19 +764,23 @@ function ReactivePanel({
               <Text style={panelStyles.stepBody}>
                 Your audience can drop pixel-events into the live game.
               </Text>
-              <Text style={panelStyles.fieldLabel}>TWITCH USERNAME</Text>
+              <Text style={panelStyles.fieldLabel}>STREAM URL</Text>
               <TextInput
                 style={panelStyles.textInput}
                 value={twitch}
                 onChangeText={setTwitch}
-                placeholder="your_twitch_handle"
+                placeholder="https://twitch.tv/your_handle"
                 placeholderTextColor={MUTED}
                 autoCapitalize="none"
                 autoCorrect={false}
+                keyboardType="url"
               />
+              <Text style={panelStyles.hintMono}>
+                Format: https://twitch.tv/accountname
+              </Text>
               <Pressable
                 style={panelStyles.ctaWrap}
-                disabled={!twitch.trim()}
+                disabled={!twitch.trim() || !twitchValid || busy}
                 onPress={handleLinkAccount}
               >
                 {({ pressed }) => (
@@ -727,16 +789,25 @@ function ReactivePanel({
                       panelStyles.cta,
                       { borderColor: HOT_PINK, shadowColor: HOT_PINK },
                       pressed && panelStyles.ctaPressed,
-                      !twitch.trim() && panelStyles.ctaDisabled,
+                      (!twitch.trim() || !twitchValid || busy) && panelStyles.ctaDisabled,
                     ]}
                   >
-                    <Text style={pixelLoaded ? panelStyles.ctaLabelPixel : panelStyles.ctaLabelFallback}>
-                      LINK ACCOUNT
-                    </Text>
-                    <MaterialCommunityIcons name="link-variant" size={16} color="#fff" />
+                    {busy && step === 2 ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Text style={pixelLoaded ? panelStyles.ctaLabelPixel : panelStyles.ctaLabelFallback}>
+                          LINK ACCOUNT
+                        </Text>
+                        <MaterialCommunityIcons name="link-variant" size={16} color="#fff" />
+                      </>
+                    )}
                   </View>
                 )}
               </Pressable>
+              {step === 2 && errorText ? (
+                <Text style={panelStyles.errorText}>{errorText}</Text>
+              ) : null}
             </View>
           </Animated.View>
         </View>
@@ -767,6 +838,16 @@ export function ArcadeCenterScreen() {
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [twitch, setTwitch] = useState('');
+  // ─── Reactive Arcade (Vorld) state — kept independent from existing flows ───
+  const [reactiveBusy, setReactiveBusy] = useState(false);
+  const [reactiveError, setReactiveError] = useState<string | null>(null);
+  const [reactiveDisableModalOpen, setReactiveDisableModalOpen] = useState(false);
+  const [reactiveAccessToken, setReactiveAccessToken] = useState<string | null>(null);
+  const [reactiveVorldUser, setReactiveVorldUser] = useState<ReactiveVorldUser | null>(null);
+  const [reactiveProfile, setReactiveProfile] = useState<ReactiveVorldProfile | null>(null);
+  const reactiveAccessTokenRef = useRef<string | null>(null);
+  const reactiveHydratedRef = useRef(false);
+  const twitchValid = TWITCH_URL_REGEX.test(twitch.trim());
   const [points, setPoints] = useState<number | null>(null);
   const [pointsLoading, setPointsLoading] = useState(false);
   const [chessLoading, setChessLoading] = useState(false);
@@ -857,19 +938,149 @@ export function ArcadeCenterScreen() {
     void ensureChessAuth();
   }, [auth.user, ensureChessAuth]);
 
+  // ─── Reactive Arcade: hydrate from secure storage on mount ────────────────
+  useEffect(() => {
+    if (reactiveHydratedRef.current) return;
+    reactiveHydratedRef.current = true;
+    void (async () => {
+      try {
+        const snap = await loadReactiveSnapshot();
+        if (snap.streamUrl) setTwitch(snap.streamUrl);
+        if (snap.accessToken) {
+          reactiveAccessTokenRef.current = snap.accessToken;
+          setReactiveAccessToken(snap.accessToken);
+        }
+        if (snap.user) setReactiveVorldUser(snap.user);
+        if (snap.profile) setReactiveProfile(snap.profile);
+        const sessionLive = Boolean(snap.accessToken && snap.user);
+        if (snap.enabled && sessionLive) {
+          setReactiveOn(true);
+        }
+      } catch (err) {
+        console.log('Reactive hydrate failed:', err);
+      }
+    })();
+  }, []);
+
+  const resetReactivePanelInputs = () => {
+    setOtp('');
+    setStep(0);
+    setReactiveError(null);
+  };
+
   const handleToggle = (next: boolean) => {
-    setReactiveOn(next);
     if (next) {
+      setReactiveError(null);
+      setOtp('');
       setStep(0);
+      setReactiveOn(true);
       setPanelVisible(true);
     } else {
-      setPanelVisible(false);
+      // Ask for confirmation before disabling.
+      setReactiveDisableModalOpen(true);
     }
   };
 
   const handleClosePanel = () => {
+    if (reactiveBusy) return;
     setPanelVisible(false);
-    setReactiveOn(false);
+    // If the user closed before completing the link flow, snap back to off
+    // unless a session already exists from a prior login.
+    if (!reactiveAccessTokenRef.current) {
+      setReactiveOn(false);
+    }
+  };
+
+  const handleSendOtp = useCallback(async () => {
+    if (reactiveBusy) return;
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setReactiveBusy(true);
+    setReactiveError(null);
+    try {
+      await requestOtp(trimmed);
+      setStep(1);
+    } catch (err) {
+      setReactiveError(err instanceof Error ? err.message : 'Could not send OTP.');
+    } finally {
+      setReactiveBusy(false);
+    }
+  }, [email, reactiveBusy]);
+
+  const handleVerifyOtp = useCallback(async () => {
+    if (reactiveBusy) return;
+    if (otp.length < 4) return;
+    setReactiveBusy(true);
+    setReactiveError(null);
+    try {
+      const result = await verifyOtp(email.trim(), otp);
+      let profile: ReactiveVorldProfile | null = null;
+      try {
+        profile = await getUserProfile(result.accessToken);
+      } catch (profileErr) {
+        console.log('Vorld profile fetch failed (non-fatal):', profileErr);
+      }
+      await saveReactiveSession({
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        user: result.user as ReactiveVorldUser,
+        profile,
+      });
+      reactiveAccessTokenRef.current = result.accessToken;
+      setReactiveAccessToken(result.accessToken);
+      setReactiveVorldUser(result.user as ReactiveVorldUser);
+      setReactiveProfile(profile);
+      setStep(2);
+    } catch (err) {
+      setReactiveError(err instanceof Error ? err.message : 'Invalid code, try again.');
+    } finally {
+      setReactiveBusy(false);
+    }
+  }, [email, otp, reactiveBusy]);
+
+  const handleLinkAccount = useCallback(async () => {
+    if (reactiveBusy) return;
+    const trimmed = twitch.trim();
+    if (!trimmed || !TWITCH_URL_REGEX.test(trimmed)) {
+      setReactiveError('Use the format https://twitch.tv/accountname');
+      return;
+    }
+    setReactiveBusy(true);
+    setReactiveError(null);
+    try {
+      await saveReactiveStreamUrl(trimmed);
+      await saveReactiveEnabled(true);
+      setReactiveOn(true);
+      setPanelVisible(false);
+      resetReactivePanelInputs();
+    } catch (err) {
+      setReactiveError(err instanceof Error ? err.message : 'Failed to save stream URL.');
+    } finally {
+      setReactiveBusy(false);
+    }
+  }, [reactiveBusy, twitch]);
+
+  const handleConfirmDisableReactive = useCallback(async () => {
+    setReactiveBusy(true);
+    try {
+      await clearReactiveSessionKeepStreamUrl();
+      reactiveAccessTokenRef.current = null;
+      setReactiveAccessToken(null);
+      setReactiveVorldUser(null);
+      setReactiveProfile(null);
+      setReactiveOn(false);
+      setReactiveDisableModalOpen(false);
+      // Stream URL stays cached so re-enabling auto-fills the field.
+    } catch (err) {
+      console.log('Reactive disable failed:', err);
+    } finally {
+      setReactiveBusy(false);
+    }
+  }, []);
+
+  const handleCancelDisableReactive = () => {
+    if (reactiveBusy) return;
+    setReactiveDisableModalOpen(false);
   };
 
   const openTradeDrawer = (mode: 'BUY' | 'SELL') => {
@@ -1169,23 +1380,65 @@ export function ArcadeCenterScreen() {
         </Text>
         <Text style={styles.sectionHint}>Pick your cabinet.</Text>
 
+        {reactiveOn && (() => {
+          const profileEmail =
+            (typeof reactiveProfile?.email === 'string' ? (reactiveProfile.email as string) : null) ??
+            reactiveVorldUser?.email ??
+            email ??
+            '--';
+          const twitchHandleMatch = twitch.trim().match(/twitch\.tv\/([a-zA-Z0-9_]+)/);
+          const twitchHandle = twitchHandleMatch ? `@${twitchHandleMatch[1]}` : (twitch || '--');
+          return (
+            <View>
+              <View style={styles.reactiveStatusStrip}>
+                <View style={styles.reactiveStatusDot} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.reactiveStatusText}>REACTIVE LIVE</Text>
+                  <Text style={styles.reactiveStatusSub}>
+                    Viewers can drop pixel-events into your matches.
+                  </Text>
+                </View>
+                <MaterialCommunityIcons name="twitch" size={18} color={HOT_PINK} />
+              </View>
+              <View style={styles.reactiveProfileCard}>
+                <View style={styles.reactiveProfileRow}>
+                  <MaterialCommunityIcons name="email-outline" size={14} color={ELECTRIC_CYAN} />
+                  <Text style={styles.reactiveProfileLabel}>EMAIL</Text>
+                  <Text style={styles.reactiveProfileValue} numberOfLines={1}>
+                    {profileEmail}
+                  </Text>
+                </View>
+                <View style={styles.reactiveProfileRow}>
+                  <MaterialCommunityIcons name="twitch" size={14} color={HOT_PINK} />
+                  <Text style={styles.reactiveProfileLabel}>TWITCH</Text>
+                  <Text style={styles.reactiveProfileValue} numberOfLines={1}>
+                    {twitchHandle}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          );
+        })()}
+
         <View style={styles.grid}>
           <GameCard
             title="CHESS"
-            subtitle={`STRATEGY · LIVE · ${CHESS_ENTRY_COST} PTS`}
+            subtitle={reactiveOn ? `STRATEGY · REACTIVE · ${CHESS_ENTRY_COST} PTS` : `STRATEGY · LIVE · ${CHESS_ENTRY_COST} PTS`}
             borderColor={GOLD}
             glowColor={GOLD}
             illustration={<ChessIllustration />}
             pixelLoaded={pixelLoaded}
             onPress={() => void handleChessPress()}
+            reactiveActive={reactiveOn}
           />
           <GameCard
             title="TIC TAC TOE"
-            subtitle="CLASSIC · LIVE"
+            subtitle={reactiveOn ? 'CLASSIC · REACTIVE' : 'CLASSIC · LIVE'}
             borderColor={NEON_BLUE}
             glowColor={NEON_BLUE}
             illustration={<TttIllustration />}
             pixelLoaded={pixelLoaded}
+            reactiveActive={reactiveOn}
           />
           <GameCard
             title="SNAKE"
@@ -1229,7 +1482,52 @@ export function ArcadeCenterScreen() {
         twitch={twitch}
         setTwitch={setTwitch}
         pixelLoaded={pixelLoaded}
+        busy={reactiveBusy}
+        errorText={reactiveError}
+        twitchValid={twitchValid}
+        onSendOtp={() => void handleSendOtp()}
+        onVerifyOtp={() => void handleVerifyOtp()}
+        onLinkAccount={() => void handleLinkAccount()}
       />
+
+      {reactiveDisableModalOpen && (
+        <View style={styles.overlayBlocker} pointerEvents="box-none">
+          <View style={styles.chessLoaderOverlay}>
+            <View style={styles.reactiveDisableCard}>
+              <MaterialCommunityIcons name="alert-octagram-outline" size={42} color={HOT_PINK} />
+              <Text style={styles.reactiveDisableTitle}>DISABLE REACTIVE?</Text>
+              <Text style={styles.reactiveDisableHint}>
+                Your Vorld access token and account will be cleared from this device.{"\n"}
+                Stream URL will be remembered for next time.
+              </Text>
+              <View style={styles.chessEntryButtons}>
+                <Pressable
+                  style={[styles.chessEntryBtn, styles.chessEntryCancelBtn]}
+                  onPress={handleCancelDisableReactive}
+                  disabled={reactiveBusy}
+                >
+                  <Text style={styles.chessEntryCancelText}>CANCEL</Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.chessEntryBtn,
+                    styles.reactiveDisableConfirmBtn,
+                    reactiveBusy && styles.utilityBtnDisabled,
+                  ]}
+                  onPress={() => void handleConfirmDisableReactive()}
+                  disabled={reactiveBusy}
+                >
+                  {reactiveBusy ? (
+                    <ActivityIndicator size="small" color={HOT_PINK} />
+                  ) : (
+                    <Text style={styles.reactiveDisableConfirmText}>DISABLE</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
 
       {(tradeDrawerOpen || chessLoading || chessEntryModalOpen) && (
         <View style={styles.overlayBlocker} pointerEvents="box-none">
@@ -2013,6 +2311,21 @@ const panelStyles = StyleSheet.create({
     color: '#fff',
     letterSpacing: 3,
   },
+  errorText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: NEON_RED,
+    fontSize: 11,
+    marginTop: 12,
+    textAlign: 'center',
+    letterSpacing: 0.6,
+  },
+  hintMono: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: MUTED,
+    fontSize: 10,
+    marginTop: 8,
+    letterSpacing: 0.4,
+  },
 });
 
 const styles = StyleSheet.create({
@@ -2462,6 +2775,156 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 1.1,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  reactiveDisableCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,0,110,0.5)',
+    backgroundColor: 'rgba(8,8,8,0.97)',
+    paddingVertical: 22,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    gap: 10,
+    shadowColor: HOT_PINK,
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveDisableTitle: {
+    fontFamily: PIXEL_FONT,
+    color: HOT_PINK,
+    fontSize: 12,
+    letterSpacing: 1.4,
+    textAlign: 'center',
+    textShadowColor: HOT_PINK,
+    textShadowRadius: 8,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  reactiveDisableHint: {
+    color: DIM,
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  reactiveDisableConfirmBtn: {
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.12)',
+  },
+  reactiveDisableConfirmText: {
+    color: HOT_PINK,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  reactiveBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    borderWidth: 1,
+    borderColor: HOT_PINK,
+    borderRadius: 3,
+    shadowColor: HOT_PINK,
+    shadowOpacity: 0.55,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: HOT_PINK,
+    shadowColor: HOT_PINK,
+    shadowOpacity: 0.95,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveBadgeText: {
+    fontFamily: PIXEL_FONT,
+    fontSize: 7,
+    color: HOT_PINK,
+    letterSpacing: 1,
+  },
+  reactiveBadgeFallback: {
+    fontWeight: '900',
+    fontSize: 9,
+    color: HOT_PINK,
+    letterSpacing: 1,
+  },
+  reactiveStatusStrip: {
+    marginTop: 8,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,110,0.45)',
+    backgroundColor: 'rgba(255,0,110,0.08)',
+  },
+  reactiveStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: HOT_PINK,
+    shadowColor: HOT_PINK,
+    shadowOpacity: 0.95,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  reactiveStatusText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: INK,
+    fontSize: 11,
+    letterSpacing: 1,
+    fontWeight: '700',
+  },
+  reactiveStatusSub: {
+    color: DIM,
+    fontSize: 10,
+    letterSpacing: 0.4,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  reactiveProfileCard: {
+    marginTop: -2,
+    marginBottom: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(8,8,8,0.92)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  reactiveProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  reactiveProfileLabel: {
+    fontFamily: PIXEL_FONT,
+    fontSize: 8,
+    color: ELECTRIC_CYAN,
+    letterSpacing: 1.2,
+    width: 56,
+  },
+  reactiveProfileValue: {
+    flex: 1,
+    color: INK,
+    fontSize: 11,
+    letterSpacing: 0.4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
 });
