@@ -4,6 +4,7 @@ const AUTH_COOKIE_KEY = 'eob.auth.cookie';
 const USER_KEY = 'eob.auth.user';
 const ACTIVE_GAME_KEY = 'eob.active.game';
 const PRIVY_SOLANA_ADDRESS_KEY = 'eob.privy.solanaAddress';
+const PENDING_CELEBRATION_KEY = 'eob.pending.celebration';
 
 export interface StoredUser {
   id: number;
@@ -84,4 +85,33 @@ export const clearPrivySolanaAddress = async (): Promise<void> => {
 
 export const clearSessionStorage = async (): Promise<void> => {
   await Promise.all([clearAuthCookie(), clearStoredUser(), clearActiveGameId()]);
+};
+
+export interface PendingCelebration {
+  outcome: 'win' | 'lose';
+  pointsDelta: number;
+  newPoints: number | null;
+  newRating: number | null;
+  ratingChange: number | null;
+  createdAt: number;
+}
+
+export const savePendingCelebration = async (data: PendingCelebration): Promise<void> => {
+  if (await canUseSecureStore())
+    await SecureStore.setItemAsync(PENDING_CELEBRATION_KEY, JSON.stringify(data));
+};
+
+export const getPendingCelebration = async (): Promise<PendingCelebration | null> => {
+  if (!(await canUseSecureStore())) return null;
+  const raw = await SecureStore.getItemAsync(PENDING_CELEBRATION_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as PendingCelebration;
+  } catch {
+    return null;
+  }
+};
+
+export const clearPendingCelebration = async (): Promise<void> => {
+  if (await canUseSecureStore()) await SecureStore.deleteItemAsync(PENDING_CELEBRATION_KEY);
 };

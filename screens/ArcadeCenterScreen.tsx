@@ -37,7 +37,12 @@ import {
   type ReactiveVorldProfile,
   type ReactiveVorldUser,
 } from '../utils/reactiveStorageHelper';
-import { saveStoredUser } from '../utils/storageHelper';
+import {
+  clearPendingCelebration,
+  getPendingCelebration,
+  saveStoredUser,
+  type PendingCelebration,
+} from '../utils/storageHelper';
 
 // ─── Reactive Arcade (Vorld) constants ───────────────────────────────────────
 const TWITCH_URL_REGEX = /^https:\/\/(?:www\.)?twitch\.tv\/[a-zA-Z0-9_]{3,25}\/?$/;
@@ -869,6 +874,7 @@ export function ArcadeCenterScreen() {
   const tradeStageRef = useRef<'review' | 'processing' | 'success'>('review');
   const tradeBusyRef = useRef(false);
   const triggerTradeRef = useRef<() => void>(() => {});
+  const [celebrationData, setCelebrationData] = useState<PendingCelebration | null>(null);
 
   const fetchPoints = refreshPoints;
 
@@ -977,6 +983,36 @@ export function ArcadeCenterScreen() {
       };
     }, []),
   );
+
+  // ─── One-shot celebration popup when arriving from ResultScreen ──────────
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        try {
+          const pending = await getPendingCelebration();
+          if (!cancelled && pending) {
+            setCelebrationData(pending);
+          }
+        } catch {
+          // ignore — popup simply won't show
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+
+  const handleCelebrationOk = useCallback(async () => {
+    try {
+      await clearPendingCelebration();
+    } catch {
+      // ignore
+    }
+    setCelebrationData(null);
+    void refreshPoints();
+  }, [refreshPoints]);
 
   const resetReactivePanelInputs = () => {
     setOtp('');
@@ -1705,6 +1741,108 @@ export function ArcadeCenterScreen() {
               </View>
             </View>
           )}
+        </View>
+      )}
+
+      {celebrationData && (
+        <View style={styles.overlayBlocker} pointerEvents="auto">
+          <View style={styles.chessLoaderOverlay}>
+            <View
+              style={[
+                arcadeCelebrationStyles.card,
+                celebrationData.outcome === 'win'
+                  ? arcadeCelebrationStyles.cardWin
+                  : arcadeCelebrationStyles.cardLose,
+              ]}
+            >
+              <View
+                style={[
+                  arcadeCelebrationStyles.iconWrap,
+                  celebrationData.outcome === 'win'
+                    ? arcadeCelebrationStyles.iconWrapWin
+                    : arcadeCelebrationStyles.iconWrapLose,
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={celebrationData.outcome === 'win' ? 'trophy-outline' : 'emoticon-sad-outline'}
+                  size={36}
+                  color={celebrationData.outcome === 'win' ? NEON_YELLOW : HOT_PINK}
+                />
+              </View>
+              <Text
+                style={
+                  pixelLoaded
+                    ? celebrationData.outcome === 'win'
+                      ? arcadeCelebrationStyles.titlePixelWin
+                      : arcadeCelebrationStyles.titlePixelLose
+                    : celebrationData.outcome === 'win'
+                      ? arcadeCelebrationStyles.titleFallbackWin
+                      : arcadeCelebrationStyles.titleFallbackLose
+                }
+              >
+                {celebrationData.outcome === 'win' ? 'VICTORY' : 'DEFEAT'}
+              </Text>
+              <Text style={arcadeCelebrationStyles.subtitle}>
+                {celebrationData.outcome === 'win'
+                  ? `You won ${celebrationData.pointsDelta} points!`
+                  : `You lost ${Math.abs(celebrationData.pointsDelta)} points`}
+              </Text>
+
+              <View style={arcadeCelebrationStyles.statsRow}>
+                <View style={arcadeCelebrationStyles.statBox}>
+                  <Text style={arcadeCelebrationStyles.statLabel}>POINTS</Text>
+                  <Text
+                    style={[
+                      arcadeCelebrationStyles.statValue,
+                      celebrationData.outcome === 'win'
+                        ? arcadeCelebrationStyles.statValueWin
+                        : arcadeCelebrationStyles.statValueLose,
+                    ]}
+                  >
+                    {celebrationData.pointsDelta > 0 ? '+' : ''}
+                    {celebrationData.pointsDelta}
+                  </Text>
+                </View>
+                {celebrationData.newPoints !== null && (
+                  <View style={arcadeCelebrationStyles.statBox}>
+                    <Text style={arcadeCelebrationStyles.statLabel}>BALANCE</Text>
+                    <Text style={arcadeCelebrationStyles.statValue}>
+                      {celebrationData.newPoints}
+                    </Text>
+                  </View>
+                )}
+                {celebrationData.newRating !== null && (
+                  <View style={arcadeCelebrationStyles.statBox}>
+                    <Text style={arcadeCelebrationStyles.statLabel}>RATING</Text>
+                    <Text style={arcadeCelebrationStyles.statValue}>
+                      {celebrationData.newRating}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <Pressable
+                style={[
+                  arcadeCelebrationStyles.okBtn,
+                  celebrationData.outcome === 'win'
+                    ? arcadeCelebrationStyles.okBtnWin
+                    : arcadeCelebrationStyles.okBtnLose,
+                ]}
+                onPress={() => void handleCelebrationOk()}
+              >
+                <Text
+                  style={[
+                    arcadeCelebrationStyles.okBtnText,
+                    celebrationData.outcome === 'win'
+                      ? arcadeCelebrationStyles.okBtnTextWin
+                      : arcadeCelebrationStyles.okBtnTextLose,
+                  ]}
+                >
+                  OK
+                </Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       )}
     </View>
@@ -2936,5 +3074,164 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 0.4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+});
+
+const arcadeCelebrationStyles = StyleSheet.create({
+  card: {
+    width: '100%',
+    maxWidth: 320,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 8,
+  },
+  cardWin: {
+    borderColor: 'rgba(255,230,0,0.45)',
+    backgroundColor: 'rgba(8,8,8,0.97)',
+    shadowColor: NEON_YELLOW,
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  cardLose: {
+    borderColor: 'rgba(255,0,110,0.45)',
+    backgroundColor: 'rgba(8,4,8,0.97)',
+    shadowColor: HOT_PINK,
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  iconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    marginBottom: 2,
+  },
+  iconWrapWin: {
+    backgroundColor: 'rgba(255,230,0,0.10)',
+    borderColor: 'rgba(255,230,0,0.55)',
+  },
+  iconWrapLose: {
+    backgroundColor: 'rgba(255,0,110,0.10)',
+    borderColor: 'rgba(255,0,110,0.55)',
+  },
+  titlePixelWin: {
+    fontFamily: PIXEL_FONT,
+    color: NEON_YELLOW,
+    fontSize: 13,
+    letterSpacing: 1.6,
+    textAlign: 'center',
+    textShadowColor: NEON_YELLOW,
+    textShadowRadius: 10,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  titlePixelLose: {
+    fontFamily: PIXEL_FONT,
+    color: HOT_PINK,
+    fontSize: 13,
+    letterSpacing: 1.6,
+    textAlign: 'center',
+    textShadowColor: HOT_PINK,
+    textShadowRadius: 8,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  titleFallbackWin: {
+    color: NEON_YELLOW,
+    fontWeight: '900',
+    fontSize: 18,
+    letterSpacing: 3,
+    textAlign: 'center',
+    textShadowColor: NEON_YELLOW,
+    textShadowRadius: 10,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  titleFallbackLose: {
+    color: HOT_PINK,
+    fontWeight: '900',
+    fontSize: 18,
+    letterSpacing: 3,
+    textAlign: 'center',
+    textShadowColor: HOT_PINK,
+    textShadowRadius: 8,
+    textShadowOffset: { width: 0, height: 0 },
+  },
+  subtitle: {
+    color: INK,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    letterSpacing: 0.6,
+  },
+  statsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  statBox: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center',
+    gap: 3,
+  },
+  statLabel: {
+    fontFamily: PIXEL_FONT,
+    color: DIM,
+    fontSize: 7,
+    letterSpacing: 1,
+  },
+  statValue: {
+    color: INK,
+    fontSize: 13,
+    fontWeight: '900',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  statValueWin: {
+    color: '#8fd36d',
+  },
+  statValueLose: {
+    color: '#ff9b9b',
+  },
+  okBtn: {
+    width: '100%',
+    minHeight: 40,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+    borderWidth: 1.5,
+  },
+  okBtnWin: {
+    backgroundColor: 'rgba(255,230,0,0.10)',
+    borderColor: 'rgba(255,230,0,0.55)',
+  },
+  okBtnLose: {
+    backgroundColor: 'rgba(255,0,110,0.10)',
+    borderColor: 'rgba(255,0,110,0.55)',
+  },
+  okBtnText: {
+    fontWeight: '900',
+    fontSize: 11,
+    letterSpacing: 1.8,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  okBtnTextWin: {
+    color: NEON_YELLOW,
+  },
+  okBtnTextLose: {
+    color: HOT_PINK,
   },
 });

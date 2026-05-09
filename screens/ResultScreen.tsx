@@ -1,16 +1,21 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEmbeddedSolanaWallet } from '@privy-io/expo';
 import { router } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { formatClock } from '../hooks/useTimer';
 import { useGame } from '../store/GameContext';
+import { usePoints } from '../store/PointsContext';
 import { getSession, setToken, updateSessionStatus } from '../lib/vorldTV';
 import {
   clearReactiveSessionId,
   loadReactiveSnapshot,
 } from '../utils/reactiveStorageHelper';
+import { savePendingCelebration } from '../utils/storageHelper';
+
+const WIN_POINTS_DELTA = 100;
+const LOSE_POINTS_DELTA = -50;
 
 // Reactive accents — same palette used in ArcadeCenterScreen / GameScreen.
 const REACTIVE_PINK = '#FF006E';
@@ -59,6 +64,7 @@ const ROW_CONFIGS = [
 export function ResultScreen() {
   const game = useGame();
   const solanaWallet = useEmbeddedSolanaWallet();
+  const { points, applyPointsDelta } = usePoints();
   const result = game.result;
   const headline = result?.result === 'win' ? 'You Won!' : result?.result === 'lose' ? 'You Lost' : 'Draw';
   const ratingDelta = result?.ratingChange;
@@ -68,6 +74,60 @@ export function ResultScreen() {
   const [signing, setSigning] = useState(false);
   const [signedPayload, setSignedPayload] = useState<string | null>(null);
   const [signError, setSignError] = useState<string | null>(null);
+
+  // ─── Celebration / consolation popup ──────────────────────────────────────
+  const pointsAppliedRef = useRef(false);
+  const [celebrationVisible, setCelebrationVisible] = useState(false);
+  const [celebrationOutcome, setCelebrationOutcome] = useState<'win' | 'lose' | null>(null);
+  const [celebrationDelta, setCelebrationDelta] = useState(0);
+  const [celebrationNewPoints, setCelebrationNewPoints] = useState<number | null>(null);
+  const [celebrationApplying, setCelebrationApplying] = useState(false);
+  const [celebrationError, setCelebrationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pointsAppliedRef.current) return;
+    if (!result) return;
+    if (result.result !== 'win' && result.result !== 'lose') return;
+    pointsAppliedRef.current = true;
+    const delta = result.result === 'win' ? WIN_POINTS_DELTA : LOSE_POINTS_DELTA;
+    setCelebrationOutcome(result.result);
+    setCelebrationDelta(delta);
+    setCelebrationVisible(true);
+    setCelebrationError(null);
+    // On loss the entry fee was already deducted at game start — show the
+    // "-50" cosmetically but do not double-charge the user.
+    if (result.result !== 'win') return;
+    setCelebrationApplying(true);
+    void (async () => {
+      try {
+        const updated = await applyPointsDelta(delta);
+        setCelebrationNewPoints(updated);
+      } catch (err) {
+        setCelebrationError(err instanceof Error ? err.message : 'Could not update points.');
+      } finally {
+        setCelebrationApplying(false);
+      }
+    })();
+  }, [result, applyPointsDelta]);
+
+  const handleCelebrationOk = async () => {
+    if (celebrationApplying) return;
+    if (celebrationOutcome) {
+      try {
+        await savePendingCelebration({
+          outcome: celebrationOutcome,
+          pointsDelta: celebrationDelta,
+          newPoints: celebrationNewPoints ?? points ?? null,
+          newRating: typeof result?.newRating === 'number' ? result.newRating : null,
+          ratingChange: typeof result?.ratingChange === 'number' ? result.ratingChange : null,
+          createdAt: Date.now(),
+        });
+      } catch {
+        // non-fatal — popup will simply not replay on Arcade Center
+      }
+    }
+    setCelebrationVisible(false);
+  };
   const ratingMessage = useMemo(() => {
     if (typeof result?.newRating !== 'number') return null;
     return `Empire of Bits rating update: ${result.newRating}`;
@@ -311,6 +371,101 @@ export function ResultScreen() {
       <Pressable style={styles.secondary} onPress={() => void handleHomePress()}>
         <Text style={styles.secondaryText}>Home</Text>
       </Pressable>
+      {celebrationVisible && celebrationOutcome ? (
+        <View style={celebrationStyles.overlay} pointerEvents="auto">
+          <Pressable style={celebrationStyles.backdrop} onPress={() => {}} />
+          <View
+            style={[
+              celebrationStyles.card,
+              celebrationOutcome === 'win'
+                ? celebrationStyles.cardWin
+                : celebrationStyles.cardLose,
+            ]}
+          >
+            <View
+              style={[
+                celebrationStyles.iconWrap,
+                celebrationOutcome === 'win'
+                  ? celebrationStyles.iconWrapWin
+                  : celebrationStyles.iconWrapLose,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={celebrationOutcome === 'win' ? 'trophy-outline' : 'emoticon-sad-outline'}
+                size={32}
+                color={celebrationOutcome === 'win' ? '#8fd36d' : '#ff9b9b'}
+              />
+            </View>
+            <Text
+              style={[
+                celebrationStyles.title,
+                celebrationOutcome === 'win'
+                  ? celebrationStyles.titleWin
+                  : celebrationStyles.titleLose,
+              ]}
+            >
+              {celebrationOutcome === 'win' ? 'Victory' : 'Defeat'}
+            </Text>
+            <Text style={celebrationStyles.subtitle}>
+              {celebrationOutcome === 'win'
+                ? `You won ${WIN_POINTS_DELTA} points`
+                : `You lost ${Math.abs(LOSE_POINTS_DELTA)} points`}
+            </Text>
+            <View style={celebrationStyles.deltaPill}>
+              <Text
+                style={[
+                  celebrationStyles.deltaText,
+                  celebrationOutcome === 'win'
+                    ? celebrationStyles.deltaTextWin
+                    : celebrationStyles.deltaTextLose,
+                ]}
+              >
+                {celebrationOutcome === 'win'
+                  ? `+${WIN_POINTS_DELTA} PTS`
+                  : `${LOSE_POINTS_DELTA} PTS`}
+              </Text>
+            </View>
+            <View style={celebrationStyles.balanceRow}>
+              <Text style={celebrationStyles.balanceLabel}>BALANCE</Text>
+              {celebrationApplying ? (
+                <ActivityIndicator
+                  size="small"
+                  color={celebrationOutcome === 'win' ? '#8fd36d' : '#ff9b9b'}
+                />
+              ) : (
+                <Text style={celebrationStyles.balanceValue}>
+                  {celebrationNewPoints ?? points ?? '--'}
+                </Text>
+              )}
+            </View>
+            {celebrationError ? (
+              <Text style={celebrationStyles.errorText}>{celebrationError}</Text>
+            ) : null}
+            <Pressable
+              style={[
+                celebrationStyles.okButton,
+                celebrationOutcome === 'win'
+                  ? celebrationStyles.okButtonWin
+                  : celebrationStyles.okButtonLose,
+                celebrationApplying && celebrationStyles.okButtonDisabled,
+              ]}
+              onPress={() => void handleCelebrationOk()}
+              disabled={celebrationApplying}
+            >
+              <Text
+                style={[
+                  celebrationStyles.okButtonText,
+                  celebrationOutcome === 'win'
+                    ? celebrationStyles.okButtonTextWin
+                    : celebrationStyles.okButtonTextLose,
+                ]}
+              >
+                OK
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -681,5 +836,147 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 0 },
+  },
+});
+
+const celebrationStyles = StyleSheet.create({
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    zIndex: 100,
+    elevation: 100,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+  },
+  card: {
+    width: '100%',
+    maxWidth: 280,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    backgroundColor: colors.surface,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+  },
+  cardWin: {
+    borderColor: 'rgba(143, 211, 109, 0.55)',
+  },
+  cardLose: {
+    borderColor: 'rgba(255, 155, 155, 0.55)',
+  },
+  iconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+  },
+  iconWrapWin: {
+    backgroundColor: 'rgba(143, 211, 109, 0.10)',
+    borderColor: 'rgba(143, 211, 109, 0.45)',
+  },
+  iconWrapLose: {
+    backgroundColor: 'rgba(255, 155, 155, 0.10)',
+    borderColor: 'rgba(255, 155, 155, 0.45)',
+  },
+  title: {
+    fontSize: typography.heading,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  titleWin: {
+    color: '#8fd36d',
+  },
+  titleLose: {
+    color: '#ff9b9b',
+  },
+  subtitle: {
+    color: colors.mutedText,
+    fontSize: typography.small,
+    fontWeight: '700',
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  deltaPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    marginBottom: spacing.sm,
+  },
+  deltaText: {
+    fontWeight: '900',
+    fontSize: typography.small,
+    letterSpacing: 1.2,
+  },
+  deltaTextWin: {
+    color: '#8fd36d',
+  },
+  deltaTextLose: {
+    color: '#ff9b9b',
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginBottom: spacing.md,
+  },
+  balanceLabel: {
+    color: colors.subtleText,
+    fontSize: typography.tiny,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  balanceValue: {
+    color: colors.text,
+    fontSize: typography.body,
+    fontWeight: '900',
+  },
+  errorText: {
+    color: colors.warning,
+    fontSize: typography.tiny,
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+    fontWeight: '700',
+  },
+  okButton: {
+    minWidth: 120,
+    minHeight: 38,
+    borderRadius: radii.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+  },
+  okButtonWin: {
+    backgroundColor: 'rgba(143, 211, 109, 0.14)',
+    borderColor: 'rgba(143, 211, 109, 0.65)',
+  },
+  okButtonLose: {
+    backgroundColor: 'rgba(255, 155, 155, 0.12)',
+    borderColor: 'rgba(255, 155, 155, 0.65)',
+  },
+  okButtonDisabled: {
+    opacity: 0.5,
+  },
+  okButtonText: {
+    fontSize: typography.small,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+  },
+  okButtonTextWin: {
+    color: '#8fd36d',
+  },
+  okButtonTextLose: {
+    color: '#ff9b9b',
   },
 });
