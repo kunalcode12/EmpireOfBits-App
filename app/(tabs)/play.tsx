@@ -1,5 +1,5 @@
-import ArcadeCenterScreen from '../../screens/ArcadeCenterScreen';
+import ArcadeCenter from '../../screens/ArcadeCenterScreen';
 
 export default function PlayTab() {
-  return <ArcadeCenterScreen />;
+  return <ArcadeCenter />;
 }

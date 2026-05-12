@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { colors } from '../constants/theme';
 import { coordsToSquare, files, ranks, squareToCoords, type Board, type ChessMove, type Color, type Square } from '../utils/chessHelpers';
 import { ChessPiece } from './ChessPiece';

@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Dimensions, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, Dimensions, Easing, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChessBoard } from '../components/ChessBoard';
 import { ChessPiece } from '../components/ChessPiece';
 import { DrawResignControls } from '../components/DrawResignControls';
@@ -35,6 +35,7 @@ const REACTIVE_CYAN = '#00F5FF';
 const REACTIVE_YELLOW = '#FFE600';
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const SESSION_SHEET_HEIGHT = SCREEN_HEIGHT * 0.75;
+const VORLD_STREAMER_URL = 'https://vorld.tv/';
 
 type SessionStatus = 'idle' | 'creating' | 'connecting' | 'active' | 'ended' | 'error';
 type LogTone = 'info' | 'started' | 'countdown' | 'arena' | 'boost' | 'drop' | 'error';
@@ -187,6 +188,7 @@ export function GameScreen() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [streamerRoleModalOpen, setStreamerRoleModalOpen] = useState(false);
   const [sessionGameConfigId, setSessionGameConfigId] = useState(REACTIVE_GAME_CONFIG_ID);
   const [sessionTitle, setSessionTitle] = useState(pickRandomChessTitle);
   const [eventLog, setEventLog] = useState<SessionLogEntry[]>([]);
@@ -412,7 +414,16 @@ export function GameScreen() {
       socketRef.current = socket;
       wireSocketHandlers(socket);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to create session.';
+      const responseError = (err as {
+        response?: { data?: { error?: { code?: string; message?: string }; message?: string } };
+      })?.response?.data?.error;
+      const msg = responseError?.message ?? (err instanceof Error ? err.message : 'Failed to create session.');
+      if (
+        responseError?.code === 'FORBIDDEN' &&
+        /active streamer role required/i.test(responseError.message ?? '')
+      ) {
+        setStreamerRoleModalOpen(true);
+      }
       setSessionError(msg);
       setSessionStatus('error');
       appendLog(msg, 'error');
@@ -765,6 +776,41 @@ export function GameScreen() {
 
       <PromotionModal visible={Boolean(chess.pendingPromotion)} color={orientation} onPick={chess.choosePromotion} onCancel={chess.cancelPromotion} />
       <DrawOfferModal visible={game.drawOfferIncoming} onAccept={game.acceptDrawOffer} onReject={game.rejectDrawOffer} />
+
+      <Modal
+        visible={streamerRoleModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStreamerRoleModalOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modal, styles.streamerRoleModal]}>
+            <View style={styles.streamerRoleIconWrap}>
+              <MaterialCommunityIcons name="broadcast" size={26} color={REACTIVE_PINK} />
+            </View>
+            <Text style={styles.modalTitle}>Streamer Mode Required</Text>
+            <Text style={styles.streamerRoleBody}>
+              Vorld blocked arena creation because this account needs an active streamer role. Go to
+              vorld.tv, open Profile, enable streamer mode, then come back and activate the session again.
+              Your chess game can continue normally.
+            </Text>
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalButton, styles.secondaryButton]}
+                onPress={() => setStreamerRoleModalOpen(false)}
+              >
+                <Text style={styles.secondaryText}>Later</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalButton, styles.acceptButton]}
+                onPress={() => void Linking.openURL(VORLD_STREAMER_URL)}
+              >
+                <Text style={styles.acceptText}>Open Vorld</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {celebration && (
         <View pointerEvents="none" style={styles.celebrationOverlay}>
@@ -1468,6 +1514,28 @@ const styles = StyleSheet.create({
   drawModal: {
     borderColor: '#55623f',
     backgroundColor: '#1e2220',
+  },
+  streamerRoleModal: {
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: '#140817',
+  },
+  streamerRoleIconWrap: {
+    alignSelf: 'center',
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,110,0.55)',
+    backgroundColor: 'rgba(255,0,110,0.12)',
+  },
+  streamerRoleBody: {
+    color: colors.mutedText,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: spacing.md,
   },
   drawBadge: {
     alignSelf: 'center',

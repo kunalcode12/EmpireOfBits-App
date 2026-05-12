@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 15.0.0"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://empireofbits-app-4.onrender.com",
+        "EXPO_PUBLIC_API_URL": "https://dev.reactive.thevorld.com",
+        "EXPO_PUBLIC_WEBSOCKET_URL": "https://dev.reactive.thevorld.com",
+        "EXPO_PUBLIC_VORLD_APP_ID": "app_mgs5crer_51c332b3"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://empireofbits-app-4.onrender.com",
+        "EXPO_PUBLIC_API_URL": "https://dev.reactive.thevorld.com",
+        "EXPO_PUBLIC_WEBSOCKET_URL": "https://dev.reactive.thevorld.com",
+        "EXPO_PUBLIC_VORLD_APP_ID": "app_mgs5crer_51c332b3"
+      }
+    }
+  }
+}

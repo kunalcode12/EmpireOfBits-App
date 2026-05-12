@@ -1,4 +1,4 @@
-import { API_BASE_URL } from './authApi';
+import { RESOLVED_API_BASE_URL } from './authApi';
 import { getAuthCookie } from '../utils/storageHelper';
 
 export interface GameStatsResponse {
@@ -15,7 +15,7 @@ const authenticatedFetch = async <T>(path: string, init: RequestInit = {}): Prom
   headers.set('Content-Type', 'application/json');
   const cookie = await getAuthCookie();
   if (cookie) headers.set('Cookie', cookie);
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${RESOLVED_API_BASE_URL}${path}`, {
     ...init,
     headers,
     credentials: 'include',

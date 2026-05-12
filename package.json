@@ -8,7 +8,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "eas:apk": "npx eas-cli build --platform android --profile preview",
+    "eas:aab": "npx eas-cli build --platform android --profile production"
   },
   "dependencies": {
     "@ethersproject/shims": "^5.8.0",

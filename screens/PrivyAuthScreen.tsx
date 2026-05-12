@@ -6,6 +6,7 @@ import {
   Inter_800ExtraBold,
   Inter_900Black,
 } from '@expo-google-fonts/inter';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   useEmbeddedSolanaWallet,
   useLoginWithEmail,
@@ -18,11 +19,10 @@ import {
   usePhantomDeeplinkWalletConnector,
 } from '@privy-io/expo/connectors';
 import { PrivyUIError, useSolanaSignMessage } from '@privy-io/expo/ui';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import { useFonts } from 'expo-font';
 import { Image } from 'expo-image';
 import * as Linking from 'expo-linking';
-import { useFonts } from 'expo-font';
 import { router } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -960,7 +960,7 @@ export function PrivyAuthScreen() {
           </Pressable>
 
           {/* Wallet */}
-          <Text style={[styles.sectionLabel, { marginTop: 28 }]}>WALLET</Text>
+          {/* <Text style={[styles.sectionLabel, { marginTop: 28 }]}>WALLET</Text>
           <Pressable
             style={styles.arcadeBtnGhostWrap}
             disabled={authBusy}
@@ -974,7 +974,7 @@ export function PrivyAuthScreen() {
                 </View>
               </ArcadeFrame>
             )}
-          </Pressable>
+          </Pressable> */}
 
           <View style={styles.privyFooter}>
             <Image source={{ uri: PRIVY_MARK_URI }} style={styles.privyMark} contentFit="contain" />

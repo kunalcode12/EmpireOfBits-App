@@ -40,11 +40,13 @@ const extra = Constants.expoConfig?.extra as
   | Record<string, string | undefined>
   | undefined;
 
+const DEPLOYED_API_BASE_URL = "https://empireofbits-app-4.onrender.com";
+
 export const API_BASE_URL =
   process.env?.EXPO_PUBLIC_API_BASE_URL ??
   process.env?.API_BASE_URL ??
   extra?.API_BASE_URL ??
-  "";
+  DEPLOYED_API_BASE_URL;
 
 const getExpoHost = (): string | null => {
   const hostUri =

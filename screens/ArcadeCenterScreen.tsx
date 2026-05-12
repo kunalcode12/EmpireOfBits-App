@@ -74,9 +74,17 @@ const MAGENTA_DEEP = '#c026d3';
 const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
 const TRADE_POINTS = 100;
 const TRADE_SOL = 0.001;
+const TRADE_FEE_BUFFER_LAMPORTS = 10_000;
 const CHESS_ENTRY_COST = 50;
 const SWIPE_KNOB_SIZE = 48;
 const SWIPE_MAX_DISTANCE = SCREEN_WIDTH * 0.62;
+
+type TradeGuardModal = {
+  title: string;
+  message: string;
+  actionLabel?: string;
+  action?: 'wallet';
+} | null;
 
 // ─── Background: dark CRT + grid + glitch rune rows (matches PrivyAuthScreen) ─
 
@@ -862,6 +870,8 @@ export function ArcadeCenterScreen() {
   const [tradeStatusText, setTradeStatusText] = useState<string | null>(null);
   const [tradeDrawerOpen, setTradeDrawerOpen] = useState(false);
   const [tradeMode, setTradeMode] = useState<'BUY' | 'SELL'>('BUY');
+  const [tradeGuardModal, setTradeGuardModal] = useState<TradeGuardModal>(null);
+  const [tradePrecheckMode, setTradePrecheckMode] = useState<'BUY' | 'SELL' | null>(null);
   const [tradeStage, setTradeStage] = useState<'review' | 'processing' | 'success'>('review');
   const [tradeFlowFrom, setTradeFlowFrom] = useState<string>('--');
   const [tradeFlowTo, setTradeFlowTo] = useState<string>('--');
@@ -1135,7 +1145,59 @@ export function ArcadeCenterScreen() {
     setReactiveDisableModalOpen(false);
   };
 
-  const openTradeDrawer = (mode: 'BUY' | 'SELL') => {
+  const openTradeDrawer = async (mode: 'BUY' | 'SELL') => {
+    if (tradePrecheckMode) return;
+
+    if (mode === 'SELL' && (points ?? 0) < TRADE_POINTS) {
+      setTradeGuardModal({
+        title: 'INSUFFICIENT POINTS',
+        message: `You need at least ${TRADE_POINTS} points to sell. Current balance: ${points ?? 0}.`,
+      });
+      return;
+    }
+
+    if (mode === 'BUY') {
+      const walletAddress =
+        solanaWallet.status === 'connected' && solanaWallet.wallets?.[0]
+          ? solanaWallet.wallets[0].address
+          : null;
+
+      if (!walletAddress) {
+        setTradeGuardModal({
+          title: 'WALLET REQUIRED',
+          message: 'Connect or create your Privy Solana wallet before buying points.',
+          actionLabel: 'GO TO WALLET',
+          action: 'wallet',
+        });
+        return;
+      }
+
+      setTradePrecheckMode('BUY');
+      try {
+        const requiredLamports = Math.round(TRADE_SOL * LAMPORTS_PER_SOL) + TRADE_FEE_BUFFER_LAMPORTS;
+        const balanceLamports = await connectionRef.current.getBalance(new PublicKey(walletAddress));
+        if (balanceLamports < requiredLamports) {
+          setTradeGuardModal({
+            title: 'INSUFFICIENT SOL',
+            message: `You need at least ${TRADE_SOL} SOL plus a small devnet network fee to buy ${TRADE_POINTS} points. Add SOL to your wallet and try again.`,
+            actionLabel: 'GO TO WALLET',
+            action: 'wallet',
+          });
+          return;
+        }
+      } catch {
+        setTradeGuardModal({
+          title: 'BALANCE CHECK FAILED',
+          message: 'Could not read your Solana wallet balance. Open Wallet, sync your balance, and try again.',
+          actionLabel: 'GO TO WALLET',
+          action: 'wallet',
+        });
+        return;
+      } finally {
+        setTradePrecheckMode(null);
+      }
+    }
+
     setTradeMode(mode);
     setTradeStatusText(null);
     setTradeResultText('');
@@ -1404,12 +1466,28 @@ export function ArcadeCenterScreen() {
               <MaterialCommunityIcons name="refresh" size={16} color={ELECTRIC_CYAN} />
               <Text style={styles.utilityBtnText}>REFRESH</Text>
             </Pressable>
-            <Pressable style={styles.utilityBtn} onPress={() => openTradeDrawer('BUY')}>
-              <MaterialCommunityIcons name="cart-outline" size={16} color={NEON_YELLOW} />
+            <Pressable
+              style={[styles.utilityBtn, tradePrecheckMode === 'BUY' && styles.utilityBtnDisabled]}
+              onPress={() => void openTradeDrawer('BUY')}
+              disabled={tradePrecheckMode !== null}
+            >
+              {tradePrecheckMode === 'BUY' ? (
+                <ActivityIndicator size="small" color={NEON_YELLOW} />
+              ) : (
+                <MaterialCommunityIcons name="cart-outline" size={16} color={NEON_YELLOW} />
+              )}
               <Text style={styles.utilityBtnText}>BUY</Text>
             </Pressable>
-            <Pressable style={styles.utilityBtn} onPress={() => openTradeDrawer('SELL')}>
-              <MaterialCommunityIcons name="cash-minus" size={16} color={HOT_PINK} />
+            <Pressable
+              style={[styles.utilityBtn, tradePrecheckMode === 'SELL' && styles.utilityBtnDisabled]}
+              onPress={() => void openTradeDrawer('SELL')}
+              disabled={tradePrecheckMode !== null}
+            >
+              {tradePrecheckMode === 'SELL' ? (
+                <ActivityIndicator size="small" color={HOT_PINK} />
+              ) : (
+                <MaterialCommunityIcons name="cash-minus" size={16} color={HOT_PINK} />
+              )}
               <Text style={styles.utilityBtnText}>SELL</Text>
             </Pressable>
           </View>
@@ -1535,6 +1613,43 @@ export function ArcadeCenterScreen() {
         onVerifyOtp={() => void handleVerifyOtp()}
         onLinkAccount={() => void handleLinkAccount()}
       />
+
+      {tradeGuardModal && (
+        <View style={styles.overlayBlocker} pointerEvents="box-none">
+          <View style={styles.chessLoaderOverlay}>
+            <View style={styles.tradeGuardCard}>
+              <MaterialCommunityIcons
+                name={tradeGuardModal.action === 'wallet' ? 'wallet-outline' : 'alert-circle-outline'}
+                size={42}
+                color={tradeGuardModal.action === 'wallet' ? NEON_YELLOW : HOT_PINK}
+              />
+              <Text style={styles.tradeGuardTitle}>{tradeGuardModal.title}</Text>
+              <Text style={styles.tradeGuardHint}>{tradeGuardModal.message}</Text>
+              <View style={styles.chessEntryButtons}>
+                <Pressable
+                  style={[styles.chessEntryBtn, styles.chessEntryCancelBtn]}
+                  onPress={() => setTradeGuardModal(null)}
+                >
+                  <Text style={styles.chessEntryCancelText}>OK</Text>
+                </Pressable>
+                {tradeGuardModal.action === 'wallet' ? (
+                  <Pressable
+                    style={[styles.chessEntryBtn, styles.tradeGuardWalletBtn]}
+                    onPress={() => {
+                      setTradeGuardModal(null);
+                      router.push('/wallet');
+                    }}
+                  >
+                    <Text style={styles.tradeGuardWalletText}>
+                      {tradeGuardModal.actionLabel ?? 'GO TO WALLET'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
 
       {reactiveDisableModalOpen && (
         <View style={styles.overlayBlocker} pointerEvents="box-none">
@@ -2923,6 +3038,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 1.1,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  tradeGuardCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,230,0,0.45)',
+    backgroundColor: 'rgba(8,8,8,0.97)',
+    paddingVertical: 22,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    gap: 10,
+    shadowColor: NEON_YELLOW,
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  tradeGuardTitle: {
+    fontFamily: PIXEL_FONT,
+    color: NEON_YELLOW,
+    fontSize: 11,
+    letterSpacing: 1.2,
+    textAlign: 'center',
+  },
+  tradeGuardHint: {
+    color: DIM,
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  tradeGuardWalletBtn: {
+    borderColor: 'rgba(255,230,0,0.5)',
+    backgroundColor: 'rgba(255,230,0,0.1)',
+  },
+  tradeGuardWalletText: {
+    color: NEON_YELLOW,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   reactiveDisableCard: {
