@@ -24,31 +24,15 @@ const server = http.createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
 
-const allowedOrigins = new Set([
-  'http://localhost:5173',
-  'http://localhost:8081',
-  'http://localhost:8082',
-  ...(process.env.CORS_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? []),
-]);
-
 app.use(
   cors({
     origin: (origin, callback) => {
-      // React Native requests can come without an Origin header.
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-
-      if (allowedOrigins.has(origin)) {
-        callback(null, true);
-        return;
-      }
-
-      callback(new Error(`CORS blocked for origin: ${origin}`));
+      // React Native requests often have no Origin header. For browser clients,
+      // echo the requesting origin so credentials/cookies still work.
+      callback(null, origin ?? true);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
     credentials: true,
   })
 );
