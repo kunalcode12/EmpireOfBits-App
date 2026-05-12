@@ -2,6 +2,17 @@
 
 Where every game matters - an arcade-first mobile gateway into the Empire of Bits ecosystem.
 
+<p align="center">
+  <img src="./assets/images/empire.jpg" alt="Empire of Bits Logo" width="420" />
+</p>
+
+## Links
+
+- Live Web App: [www.empireofbits.xyz](https://www.empireofbits.xyz/)
+- Demo Video: [Watch on X](https://x.com/KunalSharm89327/status/2053127913453838567?s=20)
+- Mobile App: In review on the Solana Mobile Play Store, live soon.
+- Status: MVP Live
+
 Empire of Bits is an interoperable gaming ecosystem on Solana where games, player identity, points, wallets, livestream reactions, and future on-chain game history are designed to move together. The broader Empire of Bits project includes a web experience and a growing arcade library. This repository is the Expo mobile/web app: the player-facing arcade hub, wallet, profile, and chess experience.
 
 The mobile app currently centers on two arcade cabinets:
