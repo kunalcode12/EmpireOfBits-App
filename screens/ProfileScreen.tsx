@@ -1,9 +1,9 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   useEmbeddedSolanaWallet,
   usePrivy,
 } from '@privy-io/expo';
 import { PrivyUIError, useSolanaSignMessage } from '@privy-io/expo/ui';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Font from 'expo-font';
 import * as Haptics from 'expo-haptics';
@@ -27,21 +27,22 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  getUserPoints,
-  getUserProfile,
-  sellPoints,
-  type ProfileUpdatePayload,
-  updateUserProfile,
-} from '../api/authApi';
-import {
   Connection,
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
-import { SOLANA_RPC_URL } from '../constants/solana';
+import * as SecureStore from 'expo-secure-store';
+import {
+  getUserPoints,
+  getUserProfile,
+  sellPoints,
+  updateUserProfile,
+  type ProfileUpdatePayload,
+} from '../api/authApi';
 import { ReactiveIdentityPanel } from '../components/ReactiveIdentityPanel';
+import { SOLANA_RPC_URL } from '../constants/solana';
 import { useAuth } from '../store/AuthContext';
 import { usePoints } from '../store/PointsContext';
 import { getPrivyDisplayName, getPrivyEmail } from '../utils/privyUser';
@@ -49,12 +50,12 @@ import {
   clearReactiveSessionKeepStreamUrl,
   loadReactiveSnapshot,
 } from '../utils/reactiveStorageHelper';
-import * as SecureStore from 'expo-secure-store';
 
 const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
 const TRADE_POINTS = 100;
 const TRADE_SOL = 0.001;
-const TERMS_URL = 'https://empireofbits.xyz/terms-and-services';
+const TERMS_OF_USE_URL = 'https://empireofbits.xyz/terms-of-use';
+const PRIVACY_POLICY_URL = 'https://empireofbits.xyz/privacy-policy';
 
 // ─── Reactive accents ─────────────────────────────────────────────────────────
 const PINK = '#FF006E';
@@ -439,6 +440,7 @@ export default function ProfileScreen() {
   const [signPanelOpen, setSignPanelOpen] = useState(false);
   const [pointsPanelOpen, setPointsPanelOpen] = useState(false);
   const [editPanelOpen, setEditPanelOpen] = useState(false);
+  const [legalPanelOpen, setLegalPanelOpen] = useState(false);
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -528,6 +530,7 @@ export default function ProfileScreen() {
 
   const pointsSlide = useRef(new Animated.Value(SCREEN_WIDTH)).current;
   const editSlide = useRef(new Animated.Value(SCREEN_WIDTH)).current;
+  const legalSlide = useRef(new Animated.Value(-SCREEN_WIDTH)).current;
 
   useEffect(() => {
     Font.loadAsync({ PressStart2P: PRESS_START_2P_URI })
@@ -629,6 +632,15 @@ export default function ProfileScreen() {
       useNativeDriver: true,
     }).start();
   }, [editPanelOpen, editSlide]);
+
+  useEffect(() => {
+    Animated.timing(legalSlide, {
+      toValue: legalPanelOpen ? 0 : -SCREEN_WIDTH,
+      duration: 260,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [legalPanelOpen, legalSlide]);
 
   const refreshPoints = useCallback(async () => {
     if (!auth.user) return;
@@ -1128,11 +1140,11 @@ export default function ProfileScreen() {
 
         {/* ── TERMS & LOGOUT ───────────────────────────────── */}
         <View style={ps.accountActionsWrap}>
-          <Pressable onPress={() => void Linking.openURL(TERMS_URL)}>
+          <Pressable onPress={() => setLegalPanelOpen(true)}>
             {({ pressed: p }) => (
               <View style={[ps.termsBtn, p && ps.btnPressed]}>
-                <MaterialCommunityIcons name="file-document-outline" size={22} color={AMBER} />
-                <Text style={ps.termsBtnText}>TERMS & SERVICES</Text>
+                <MaterialCommunityIcons name="shield-lock-outline" size={22} color={AMBER} />
+                <Text style={ps.termsBtnText}>TERMS & PRIVACY</Text>
               </View>
             )}
           </Pressable>
@@ -1247,6 +1259,44 @@ export default function ProfileScreen() {
             )}
           </Pressable>
         </ScrollView>
+      </Animated.View>
+
+      <Animated.View
+        style={[
+          ps.sidePanel,
+          {
+            transform: [{ translateX: legalSlide }],
+            pointerEvents: legalPanelOpen ? 'auto' : 'none',
+          } as any,
+        ]}
+      >
+        <RunicBackground />
+        <View style={[ps.sideHeader, { paddingTop: insets.top + 12 }]}>
+          <Pressable onPress={() => setLegalPanelOpen(false)} style={ps.sideBackBtn}>
+            <MaterialCommunityIcons name="arrow-left" size={18} color={AMBER} />
+            <Text style={[ps.sideBackText, { color: AMBER }]}>BACK</Text>
+          </Pressable>
+          <Text style={ps.sideTitle}>TERMS & PRIVACY</Text>
+        </View>
+        <View style={ps.sideBody}>
+          <Text style={ps.sideHint}>Review Empire of Bits legal documents</Text>
+          <Pressable
+            style={[ps.sideActionBtn, ps.legalLinkBtn]}
+            onPress={() => void Linking.openURL(TERMS_OF_USE_URL)}
+          >
+            <MaterialCommunityIcons name="file-document-outline" size={18} color={AMBER} />
+            <Text style={[ps.sideActionText, ps.legalLinkText]}>Terms of use</Text>
+            <MaterialCommunityIcons name="open-in-new" size={16} color={DIM} />
+          </Pressable>
+          <Pressable
+            style={[ps.sideActionBtn, ps.legalLinkBtn]}
+            onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}
+          >
+            <MaterialCommunityIcons name="shield-account-outline" size={18} color={CYAN} />
+            <Text style={[ps.sideActionText, ps.legalLinkText]}>Privacy policy</Text>
+            <MaterialCommunityIcons name="open-in-new" size={16} color={DIM} />
+          </Pressable>
+        </View>
       </Animated.View>
     </View>
   );
@@ -1747,12 +1797,20 @@ const ps = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 10,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.22)',
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 10,
     paddingVertical: 12,
+  },
+  legalLinkBtn: {
+    justifyContent: 'flex-start',
+    paddingHorizontal: 16,
+  },
+  legalLinkText: {
+    flex: 1,
+    textAlign: 'left',
   },
   sideActionText: {
     color: INK,

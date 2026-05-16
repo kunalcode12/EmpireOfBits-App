@@ -12,6 +12,7 @@
     },
     "android": {
       "package": "com.kunal.eobapp",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#05050F",
         "foregroundImage": "./assets/images/empire-icon.png"
