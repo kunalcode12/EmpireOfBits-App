@@ -1557,12 +1557,12 @@ export function ArcadeCenterScreen() {
           />
           <GameCard
             title="TIC TAC TOE"
-            subtitle={reactiveOn ? 'CLASSIC · REACTIVE' : 'CLASSIC · LIVE'}
-            borderColor={NEON_BLUE}
-            glowColor={NEON_BLUE}
-            illustration={<TttIllustration />}
+            subtitle="ARCADE · LOCKED"
+            borderColor="#3a3a3a"
+            glowColor="#3a3a3a"
+            illustration={<ComingSoonIllustration icon="grid-large" />}
+            locked
             pixelLoaded={pixelLoaded}
-            reactiveActive={reactiveOn}
           />
           <GameCard
             title="SNAKE"

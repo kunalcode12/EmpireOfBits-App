@@ -15,6 +15,7 @@ import {
   Animated,
   Dimensions,
   Easing,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -53,6 +54,7 @@ import * as SecureStore from 'expo-secure-store';
 const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
 const TRADE_POINTS = 100;
 const TRADE_SOL = 0.001;
+const TERMS_URL = 'https://empireofbits.xyz/terms-and-services';
 
 // ─── Reactive accents ─────────────────────────────────────────────────────────
 const PINK = '#FF006E';
@@ -1124,8 +1126,16 @@ export default function ProfileScreen() {
           </>
         ) : null}
 
-        {/* ── LOGOUT BUTTON ────────────────────────────────── */}
-        <View style={ps.logoutBtnWrap}>
+        {/* ── TERMS & LOGOUT ───────────────────────────────── */}
+        <View style={ps.accountActionsWrap}>
+          <Pressable onPress={() => void Linking.openURL(TERMS_URL)}>
+            {({ pressed: p }) => (
+              <View style={[ps.termsBtn, p && ps.btnPressed]}>
+                <MaterialCommunityIcons name="file-document-outline" size={22} color={AMBER} />
+                <Text style={ps.termsBtnText}>TERMS & SERVICES</Text>
+              </View>
+            )}
+          </Pressable>
           <Pressable onPress={onLogout} disabled={logoutBusy}>
             {({ pressed: p }) => (
               <View style={[ps.logoutBtn, p && ps.btnPressed]}>
@@ -1617,7 +1627,31 @@ const ps = StyleSheet.create({
     letterSpacing: 2,
   },
   signBtnSub: { fontSize: 11, color: DIM, marginTop: 2 },
-  // Logout button
+  // Terms & logout
+  termsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255,184,0,0.06)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,184,0,0.45)',
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    shadowColor: AMBER,
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  termsBtnText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 14,
+    color: AMBER,
+    fontWeight: '800',
+    letterSpacing: 2,
+  },
   logoutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2163,7 +2197,8 @@ const ps = StyleSheet.create({
     borderColor: 'rgba(255,184,0,0.5)',
     backgroundColor: 'rgba(255,184,0,0.1)',
   },
-  logoutBtnWrap: {
+  accountActionsWrap: {
     marginTop: 92,
+    gap: 12,
   },
 });

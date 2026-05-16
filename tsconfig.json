@@ -1,24 +1,16 @@
 {
-  "extends": "expo/tsconfig.base",
+  "extends": "./node_modules/expo/tsconfig.base.json",
   "compilerOptions": {
     "strict": true,
-    "module": "esnext",
-    "moduleResolution": "Bundler",
-    "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"]
     }
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    "**/*.d.ts",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ],
-  "exclude": [
-    "backendEob/**"
-  ]
+  "exclude": ["node_modules", "backendEob/**"]
 }

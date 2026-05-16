@@ -83,7 +83,7 @@ export default function RootLayout() {
         <AuthProvider>
           <PointsProvider>
             <GameProvider>
-              <Stack initialRouteName="privy-auth" screenOptions={{ headerShown: false, animation: 'fade' }}>
+              <Stack initialRouteName="(tabs)" screenOptions={{ headerShown: false, animation: 'fade' }}>
                 <Stack.Screen name="privy-auth" />
                 <Stack.Screen name="index" />
                 <Stack.Screen name="auth-flow" />
