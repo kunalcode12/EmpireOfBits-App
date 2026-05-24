@@ -71,7 +71,7 @@ const NEON_RED = '#ef4444';
 const CRT_TINT = 'rgba(255, 255, 255, 0.04)';
 const VIGNETTE = 'rgba(0, 0, 0, 0.25)';
 const MAGENTA_DEEP = '#c026d3';
-const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
+const TREASURY_WALLET = 'HfYqSJrCeWwzKU2JMboEb7dPmQhT23Trqat1ch4ZwiUd';
 const TRADE_POINTS = 100;
 const TRADE_SOL = 0.001;
 const TRADE_FEE_BUFFER_LAMPORTS = 10_000;
@@ -1179,7 +1179,7 @@ export function ArcadeCenterScreen() {
         if (balanceLamports < requiredLamports) {
           setTradeGuardModal({
             title: 'INSUFFICIENT SOL',
-            message: `You need at least ${TRADE_SOL} SOL plus a small devnet network fee to buy ${TRADE_POINTS} points. Add SOL to your wallet and try again.`,
+            message: `You need at least ${TRADE_SOL} SOL plus a small mainnet network fee to buy ${TRADE_POINTS} points. Add SOL to your wallet and try again.`,
             actionLabel: 'GO TO WALLET',
             action: 'wallet',
           });
@@ -1272,6 +1272,7 @@ export function ArcadeCenterScreen() {
 
       setTradeStatusText('Transaction confirmed. Updating points...');
       const updatedPoints = await applyPointsDelta(TRADE_POINTS);
+      await refreshPoints();
       setTradeResultText(
         `Sent ${TRADE_SOL} SOL\n+${TRADE_POINTS} points\nBalance: ${updatedPoints}${
           txResult.signature ? `\nTx: ${txResult.signature.slice(0, 20)}...` : ''
@@ -1314,7 +1315,7 @@ export function ArcadeCenterScreen() {
       await provider.request({
         method: 'signMessage',
         params: {
-          message: `Sell confirmation: redeem ${TRADE_POINTS} points for ${TRADE_SOL} SOL on devnet`,
+          message: `Sell confirmation: redeem ${TRADE_POINTS} points for ${TRADE_SOL} SOL on mainnet`,
         },
       });
 
@@ -1324,6 +1325,7 @@ export function ArcadeCenterScreen() {
       const sellResponse = await sellPoints(walletAddress);
       const updatedPoints = sellResponse.points;
       setPoints(updatedPoints);
+      await refreshPoints();
       setTradeResultText(
         `${sellResponse.payoutSol} SOL sent from treasury\n-${sellResponse.pointsSpent} points\nBalance: ${updatedPoints}\nTx: ${sellResponse.txSignature.slice(0, 20)}...`,
       );

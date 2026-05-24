@@ -87,6 +87,8 @@ export default function RootLayout() {
                 <Stack.Screen name="privy-auth" />
                 <Stack.Screen name="index" />
                 <Stack.Screen name="auth-flow" />
+                <Stack.Screen name="computer-chess" />
+                <Stack.Screen name="computer-result" />
                 <Stack.Screen name="(tabs)" />
               </Stack>
               <StatusBar style="light" />

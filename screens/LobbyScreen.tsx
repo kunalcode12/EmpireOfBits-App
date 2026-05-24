@@ -2,11 +2,12 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Dimensions, Easing, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getUserRatingById } from '../api/authApi';
 import { colors, radii, spacing, typography } from '../constants/theme';
 import { useAuth } from '../store/AuthContext';
 import { useGame } from '../store/GameContext';
+import { usePoints } from '../store/PointsContext';
 import { loadReactiveSnapshot } from '../utils/reactiveStorageHelper';
 import type { ColorPreference, TimeControl } from '../websockets/gameSocket';
 
@@ -65,13 +66,20 @@ function RunicBackground() {
   );
 }
 
+const CHESS_ENTRY_COST = 50;
+
 export function LobbyScreen() {
   const auth = useAuth();
   const game = useGame();
+  const { applyPointsDelta } = usePoints();
+  const [refunding, setRefunding] = useState(false);
   const blurTargetRef = useRef<View | null>(null);
   const [timeControl, setTimeControl] = useState<TimeControl | null>('5');
   const [colorPreference, setColorPreference] = useState<ColorPreference | null>('w');
   const [timeModalOpen, setTimeModalOpen] = useState(false);
+  const [opponentMode, setOpponentMode] = useState<'random' | 'computer'>('random');
+  const [opponentPanelOpen, setOpponentPanelOpen] = useState(false);
+  const opponentSlide = useRef(new Animated.Value(Dimensions.get('window').width)).current;
   const [playerRating, setPlayerRating] = useState<number | null>(game.playerRating);
   const ready = Boolean(timeControl && colorPreference);
   const timeLabel = timeControl === '10' ? '10 min' : '5 min';
@@ -153,6 +161,18 @@ export function LobbyScreen() {
     if (typeof game.playerRating === 'number') setPlayerRating(game.playerRating);
   }, [game.playerRating]);
 
+  useEffect(() => {
+    Animated.timing(opponentSlide, {
+      toValue: opponentPanelOpen ? 0 : Dimensions.get('window').width,
+      duration: 260,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [opponentPanelOpen, opponentSlide]);
+
+  const opponentLabel = opponentMode === 'random' ? 'vs Random' : 'vs Computer';
+  const opponentIcon = opponentMode === 'random' ? 'account-group-outline' : 'robot';
+
   return (
     <View style={styles.screen}>
       {/* Runes sit directly on the screen root — nothing covers them */}
@@ -183,7 +203,17 @@ export function LobbyScreen() {
                 ) : null}
               </View>
             </View>
-            <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <Pressable
+              style={[styles.backButton, refunding && { opacity: 0.5 }]}
+              disabled={refunding}
+              onPress={async () => {
+                setRefunding(true);
+                try {
+                  await applyPointsDelta(CHESS_ENTRY_COST);
+                } catch {}
+                router.back();
+              }}
+            >
               <MaterialCommunityIcons name="arrow-left" size={16} color={colors.mutedText} />
               <Text style={styles.backButtonText}>Back</Text>
             </Pressable>
@@ -212,14 +242,15 @@ export function LobbyScreen() {
                 </View>
                 <MaterialCommunityIcons name="chevron-right" size={18} color={colors.mutedText} />
               </Pressable>
-              <View style={styles.randomRow}>
+              <Pressable style={styles.randomRow} onPress={() => setOpponentPanelOpen(true)}>
                 <View style={styles.randomDivider} />
                 <View style={styles.randomRowLeft}>
-                  <MaterialCommunityIcons name="account-group-outline" size={16} color={colors.mutedText} />
-                  <Text style={styles.randomText}>vs Random</Text>
+                  <MaterialCommunityIcons name={opponentIcon} size={16} color={colors.mutedText} />
+                  <Text style={styles.randomText}>{opponentLabel}</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={22} color="#f6c849" style={{ marginLeft: 'auto' }} />
                 </View>
                 <View style={styles.randomDivider} />
-              </View>
+              </Pressable>
             </View>
           </View>
 
@@ -261,15 +292,26 @@ export function LobbyScreen() {
         <View style={styles.playFooter}>
           <Pressable
             disabled={!ready}
-            style={[styles.play, reactiveOn && styles.playReactive, !ready && styles.disabled]}
+            style={[styles.play, reactiveOn && opponentMode === 'random' && styles.playReactive, !ready && styles.disabled]}
             onPress={() => {
-              if (timeControl && colorPreference) void game.startMatchmaking(timeControl, colorPreference);
+              if (!timeControl || !colorPreference) return;
+              if (opponentMode === 'computer') {
+                const c = colorPreference === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : colorPreference;
+                router.push(`/computer-chess?color=${c}&time=${timeControl}` as any);
+              } else {
+                void game.startMatchmaking(timeControl, colorPreference);
+              }
             }}
           >
-            {reactiveOn ? (
+            {reactiveOn && opponentMode === 'random' ? (
               <View style={styles.playReactiveInner}>
                 <MaterialCommunityIcons name="twitch" size={20} color="#fff" />
                 <Text style={styles.playText}>Play Reactive</Text>
+              </View>
+            ) : opponentMode === 'computer' ? (
+              <View style={styles.playReactiveInner}>
+                <MaterialCommunityIcons name="robot" size={20} color="#fff" />
+                <Text style={styles.playText}>Play vs Computer</Text>
               </View>
             ) : (
               <Text style={styles.playText}>Play</Text>
@@ -312,6 +354,52 @@ export function LobbyScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Opponent mode selector slide panel */}
+      <Animated.View
+        style={[
+          styles.opponentPanel,
+          { transform: [{ translateX: opponentSlide }], pointerEvents: opponentPanelOpen ? 'auto' : 'none' } as any,
+        ]}
+      >
+        <RunicBackground />
+        <View style={styles.opponentPanelContent}>
+          <View style={styles.opponentPanelHeader}>
+            <Pressable style={styles.opponentPanelBack} onPress={() => setOpponentPanelOpen(false)}>
+              <MaterialCommunityIcons name="arrow-left" size={18} color={colors.mutedText} />
+              <Text style={styles.opponentPanelBackText}>Back</Text>
+            </Pressable>
+            <Text style={styles.opponentPanelTitle}>Opponent</Text>
+            <View style={{ width: 70 }} />
+          </View>
+
+          <View style={styles.opponentOptions}>
+            <Pressable
+              style={[styles.opponentOption, opponentMode === 'random' && styles.opponentOptionSelected]}
+              onPress={() => { setOpponentMode('random'); setOpponentPanelOpen(false); }}
+            >
+              <MaterialCommunityIcons name="account-group-outline" size={22} color={opponentMode === 'random' ? '#f6c849' : colors.mutedText} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.opponentOptionTitle, opponentMode === 'random' && styles.opponentOptionTitleSelected]}>vs Random</Text>
+                <Text style={styles.opponentOptionSub}>Play against a real opponent online</Text>
+              </View>
+              {opponentMode === 'random' && <MaterialCommunityIcons name="check-circle" size={20} color="#f6c849" />}
+            </Pressable>
+
+            <Pressable
+              style={[styles.opponentOption, opponentMode === 'computer' && styles.opponentOptionSelected]}
+              onPress={() => { setOpponentMode('computer'); setOpponentPanelOpen(false); }}
+            >
+              <MaterialCommunityIcons name="robot" size={22} color={opponentMode === 'computer' ? '#22d3ee' : colors.mutedText} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.opponentOptionTitle, opponentMode === 'computer' && styles.opponentOptionTitleSelected]}>vs Computer</Text>
+                <Text style={styles.opponentOptionSub}>Practice against the engine</Text>
+              </View>
+              {opponentMode === 'computer' && <MaterialCommunityIcons name="check-circle" size={20} color="#22d3ee" />}
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
     </View>
   );
 }
@@ -775,5 +863,76 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  opponentPanel: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.background,
+  },
+  opponentPanelContent: {
+    flex: 1,
+    padding: spacing.xl,
+    paddingTop: spacing.xxl,
+  },
+  opponentPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xxl,
+  },
+  opponentPanelBack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  opponentPanelBackText: {
+    color: colors.mutedText,
+    fontWeight: '800',
+  },
+  opponentPanelTitle: {
+    color: colors.text,
+    fontSize: typography.heading,
+    fontWeight: '900',
+  },
+  opponentOptions: {
+    gap: spacing.md,
+  },
+  opponentOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  opponentOptionSelected: {
+    borderColor: 'rgba(246,200,73,0.55)',
+    backgroundColor: 'rgba(246,200,73,0.08)',
+  },
+  opponentOptionTitle: {
+    color: colors.text,
+    fontWeight: '900',
+    fontSize: typography.body,
+  },
+  opponentOptionTitleSelected: {
+    color: '#f6c849',
+  },
+  opponentOptionSub: {
+    color: colors.subtleText,
+    fontSize: typography.small,
+    fontWeight: '600',
+    marginTop: 2,
   },
 });

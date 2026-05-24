@@ -45,7 +45,7 @@ model User {
   password String?
   googleId String?
   chessLevel ChessLevel
-  points Int @default(100)
+  points Int @default(0)
   rating Int @default(800)
   gamesWon Game[] @relation("GamesWon")
   gamesLost Game[] @relation("GamesLost")

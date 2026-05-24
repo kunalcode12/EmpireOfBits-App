@@ -184,7 +184,6 @@ export default function HomeScreen() {
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [isCongratsModalVisible, setIsCongratsModalVisible] = useState(false);
-  const [newUserPoints, setNewUserPoints] = useState<number>(0);
 
   // Entrance animation values
   const logoAnim  = useRef(new Animated.Value(0)).current;
@@ -238,6 +237,10 @@ export default function HomeScreen() {
     if (!privyReady || !privyUser || hasAttemptedAutoAuth.current) return;
     const email = getPrivyEmail(privyUser);
     if (!email) return;
+    console.log('Email:', email);
+    console.log('Privy User:', privyUser);
+    console.log('Privy Ready:', privyReady);
+    console.log('Has Attempted Auto Auth:', hasAttemptedAutoAuth.current);
 
     hasAttemptedAutoAuth.current = true;
     const localPart = email.split('@')[0] || 'Player';
@@ -246,6 +249,7 @@ export default function HomeScreen() {
     const name = baseName.slice(0, 20);
 
     const syncAuth = async () => {
+      console.log('Syncing Auth...');
       setAuthLoading(true);
       try {
         const result = await registerOrLogin({
@@ -254,8 +258,8 @@ export default function HomeScreen() {
           password: 'test1234@',
         });
         await saveStoredUser(result.user);
+        console.log('Result:', result);
         if (result.isNewUser) {
-          setNewUserPoints(result.points);
           setIsCongratsModalVisible(true);
         }
       } catch (error) {
@@ -439,7 +443,7 @@ export default function HomeScreen() {
             <Text style={s.chainGlyph}>◎</Text>
             <Text style={s.chainLabel}>SOLANA</Text>
             <View style={s.chainSep} />
-            <Text style={s.chainNet}>DEVNET</Text>
+            <Text style={s.chainNet}>MAINNET</Text>
           </View>
           <Text style={s.footerText}>
             <Text style={{ color: PURPLE }}>Powered </Text>
@@ -463,14 +467,12 @@ export default function HomeScreen() {
             <View style={[s.bracket, s.bracketAmberBL]} />
             <View style={[s.bracket, s.bracketAmberBR]} />
             <Text style={s.modalBadge}>◆ NEW CHAMPION UNLOCKED ◆</Text>
-            <Text style={s.modalTitle}>CONGRATULATIONS!</Text>
-            <Text style={s.modalSubTitle}>Your Empire of Bits profile is ready.</Text>
+            <Text style={s.modalTitle}>WELCOME!</Text>
+            <Text style={s.modalSubTitle}>Your Empire of Bits profile is ready.{'\n'}Buy points with SOL to enter the arena.</Text>
             <View style={s.pointsWrap}>
-              <Text style={s.pointsLabel}>STARTING POINTS</Text>
-              <Text style={s.pointsValue}>{newUserPoints}</Text>
               <View style={s.pointsLineRow}>
                 <View style={s.pointsLine} />
-                <Text style={s.pointsLineText}>READY</Text>
+                <Text style={s.pointsLineText}>LET'S GO</Text>
                 <View style={s.pointsLine} />
               </View>
             </View>

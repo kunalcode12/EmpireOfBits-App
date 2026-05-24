@@ -51,7 +51,7 @@ import {
   loadReactiveSnapshot,
 } from '../utils/reactiveStorageHelper';
 
-const TREASURY_WALLET = '9bYK9h5Cjb2UXwWgnCi7zYMUYhcJfgkwL5B5KmgoDHEB';
+const TREASURY_WALLET = 'HfYqSJrCeWwzKU2JMboEb7dPmQhT23Trqat1ch4ZwiUd';
 const TRADE_POINTS = 100;
 const TRADE_SOL = 0.001;
 const TERMS_OF_USE_URL = 'https://empireofbits.xyz/terms-of-use';
@@ -718,6 +718,7 @@ export default function ProfileScreen() {
               setProfileData((prev) =>
                 prev ? { ...prev, user: { ...prev.user, points: updatedPoints } } : prev,
               );
+              await refreshPoints();
               Alert.alert(
                 'Buy successful',
                 `Sent ${TRADE_SOL} SOL\n+${TRADE_POINTS} points\nBalance: ${updatedPoints}${
@@ -773,7 +774,7 @@ export default function ProfileScreen() {
               await provider.request({
                 method: 'signMessage',
                 params: {
-                  message: `Sell confirmation: redeem ${TRADE_POINTS} points for ${TRADE_SOL} SOL on devnet`,
+                  message: `Sell confirmation: redeem ${TRADE_POINTS} points for ${TRADE_SOL} SOL on mainnet`,
                 },
               });
               const sellResponse = await sellPoints(wAddress);
@@ -782,6 +783,7 @@ export default function ProfileScreen() {
               setProfileData((prev) =>
                 prev ? { ...prev, user: { ...prev.user, points: updatedPoints } } : prev,
               );
+              await refreshPoints();
               Alert.alert(
                 'Sell successful',
                 `${sellResponse.payoutSol} SOL sent from treasury\n-${sellResponse.pointsSpent} points\nBalance: ${updatedPoints}\nTx: ${sellResponse.txSignature.slice(0, 20)}...`,

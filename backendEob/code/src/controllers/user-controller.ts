@@ -45,7 +45,9 @@ const setAuthCookie = (res: Response, userId: number) => {
   });
 };
 
-const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+// TODO(mainnet): override SOLANA_RPC_URL in your Render env with a paid mainnet RPC
+// (Helius / Triton / QuickNode). Public api.mainnet-beta.solana.com is rate-limited.
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const SELL_POINTS_COST = Number(process.env.SELL_POINTS_COST || '100');
 const SELL_SOL_PAYOUT = Number(process.env.SELL_SOL_PAYOUT || '0.001');
 

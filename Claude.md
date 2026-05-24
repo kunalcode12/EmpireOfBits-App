@@ -10,7 +10,7 @@ For backend-only detail, see `backendEob/code/CLAUDE.md` if present.
 
 **EobApp** is a cross-platform **mobile/web** app built with **Expo / React Native**. It combines:
 
-- **Empire of Bits (product shell)**: Home and Play surfaces with arcade / retro UI, Solana devnet positioning in copy, and **Privy** for wallet-friendly identity (email, Google, external Solana wallets via SIWS, embedded Solana wallet).
+- **Empire of Bits (product shell)**: Home and Play surfaces with arcade / retro UI, Solana mainnet positioning in copy, and **Privy** for wallet-friendly identity (email, Google, external Solana wallets via SIWS, embedded Solana wallet).
 - **Online chess (implemented gameplay)**: room games, random matchmaking, timers, move sync, draw/resign, room chat, reconnect — backed by the **Node + Postgres + Redis** API and WebSockets.
 - **Legacy chess account**: `AuthContext` + `authApi` still implement **JWT-in-cookie** registration/login against the chess backend. After Privy login, `auth-flow` / `index` use `AuthBoundary` and only show chess lobby/game flows when this chess user exists (otherwise users see `AuthScreen` to link the backend account).
 - **Guest chess**: guests can play via Redis-backed sessions and WebSocket path `/guest` (backend); can merge into a registered user.
@@ -114,7 +114,7 @@ Chess UI screens live under `screens/` and are composed by `auth-flow` / `index`
 | `GameScreen.tsx` | Live board, timers, moves, draw/resign. |
 | `ResultScreen.tsx` | Post-game when `phase === 'finished'`. |
 | `PrivyAuthScreen.tsx` | Privy authentication UI (email + OTP slide panel, Google, wallet picker modal, SIWS; signed-in: continue to app, logout, embedded wallet sign demos). |
-| `PrivyWalletScreen.tsx` | Privy embedded wallet + Solana devnet tooling. |
+| `PrivyWalletScreen.tsx` | Privy embedded wallet + Solana mainnet tooling. |
 | `ArcadeCenterScreen.tsx` | Play tab: CRT/glitch rune **ArcadeBackground**, **ArcadeHeader**, reactive toggle + **ReactivePanel** (email / OTP / Twitch steps — product UI), **GameCard** grid; Chess and Tic-tac-toe cards are shown unlocked but **may not yet define `onPress`** (navigation to chess can remain via Home → auth-flow). |
 
 ### `store/`
@@ -171,7 +171,7 @@ Chess UI screens live under `screens/` and are composed by `auth-flow` / `index`
 | `theme.ts` | Chess / app color tokens. |
 | `pieceAssets.ts` | Piece SVG path data. |
 | `privyConfig.ts` | `PRIVY_APP_ID`, `PRIVY_CLIENT_ID`, `privyConfigured` — prefer **env** (`EXPO_PUBLIC_PRIVY_*`) or `app.json` `extra` in production; avoid committing real secrets. |
-| `solana.ts` | `SOLANA_RPC_URL` (default devnet public RPC; override with `EXPO_PUBLIC_SOLANA_RPC_URL` or `extra.solanaRpcUrl`). |
+| `solana.ts` | `SOLANA_RPC_URL` (default mainnet-beta public RPC; override with `EXPO_PUBLIC_SOLANA_RPC_URL` or `extra.solanaRpcUrl` — use a paid RPC for production). |
 
 ### `assets/`
 
@@ -224,7 +224,7 @@ Use **`npm run build`** / **`npm run dev`** inside `backendEob/code/`. After sch
 
 - `EXPO_PUBLIC_PRIVY_APP_ID`, `EXPO_PUBLIC_PRIVY_CLIENT_ID` (or `expo.extra` equivalents).
 - `EXPO_PUBLIC_API_BASE_URL` / `API_BASE_URL` for chess REST + WS base resolution.
-- `EXPO_PUBLIC_SOLANA_RPC_URL` (optional; defaults to public devnet in `constants/solana.ts`).
+- `EXPO_PUBLIC_SOLANA_RPC_URL` (optional; defaults to public mainnet-beta in `constants/solana.ts` — replace with a paid RPC for production).
 
 **Backend** — see `backendEob/code/src/config/env.ts` and `process.env` usage (`DATABASE_URL`, `SECRET_TOKEN`, Redis, `CORS_ORIGINS`, etc.).
 

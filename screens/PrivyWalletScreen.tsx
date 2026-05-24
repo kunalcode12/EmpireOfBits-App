@@ -2,6 +2,13 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEmbeddedSolanaWallet, usePrivy } from '@privy-io/expo';
 import { PrivyUIError, useFundSolanaWallet } from '@privy-io/expo/ui';
 import type { SolanaCluster } from '@privy-io/js-sdk-core';
+import {
+  Connection,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from '@solana/web3.js';
 import * as Clipboard from 'expo-clipboard';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -22,20 +29,13 @@ import {
 } from 'react-native';
 import QRCodeStyled from 'react-native-qrcode-styled';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  Connection,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-  SystemProgram,
-  Transaction,
-} from '@solana/web3.js';
 
 import { SOLANA_RPC_URL } from '../constants/solana';
+import { getPrivyDisplayName, getPrivyEmail } from '../utils/privyUser';
 import {
   getPrivySolanaAddress,
   savePrivySolanaAddress,
 } from '../utils/storageHelper';
-import { getPrivyDisplayName, getPrivyEmail } from '../utils/privyUser';
 
 const BG = '#05050F';
 const BG_MID = '#0e0e0e';
@@ -175,7 +175,7 @@ export function PrivyWalletScreen() {
   const { fundWallet } = useFundSolanaWallet();
 
   const cluster = useMemo<SolanaCluster>(
-    () => ({ name: 'devnet', rpcUrl: SOLANA_RPC_URL }),
+    () => ({ name: 'mainnet-beta', rpcUrl: SOLANA_RPC_URL }),
     [],
   );
 
@@ -465,7 +465,7 @@ export function PrivyWalletScreen() {
                 },
               ]}
             />
-            <Text style={styles.netPillText}>DEVNET</Text>
+            <Text style={styles.netPillText}>MAINNET</Text>
           </View>
         </View>
 
@@ -600,7 +600,7 @@ export function PrivyWalletScreen() {
               <View style={styles.tokenSubRow}>
                 <Text style={styles.tokenTicker}>SOL</Text>
                 <View style={styles.tokenSep} />
-                <Text style={styles.tokenNet}>Devnet</Text>
+                <Text style={styles.tokenNet}>Mainnet</Text>
               </View>
             </View>
             <View style={styles.tokenRight}>
@@ -642,9 +642,9 @@ export function PrivyWalletScreen() {
             <View style={styles.sectionLine} />
           </View>
           <View style={styles.infoCard}>
-            <InfoRow icon="git-network-outline" label="Cluster" value="Solana Devnet" highlight />
+            <InfoRow icon="git-network-outline" label="Cluster" value="Solana Mainnet" highlight />
             <View style={styles.divider} />
-            <InfoRow icon="server-outline" label="RPC" value={SOLANA_RPC_URL} mono />
+            {/* <InfoRow icon="server-outline" label="RPC" value={SOLANA_RPC_URL} mono /> */}
             <View style={styles.divider} />
             <InfoRow
               icon="pulse-outline"
@@ -654,7 +654,7 @@ export function PrivyWalletScreen() {
             />
           </View>
           <Text style={styles.footnote}>
-            ⟡ Transfers are signed by your embedded key and broadcast directly to devnet RPC.
+            ⟡ Transfers are signed by your embedded key and broadcast directly to mainnet RPC.
           </Text>
         </View>
       </ScrollView>
@@ -679,7 +679,7 @@ export function PrivyWalletScreen() {
           <View style={styles.panelHeaderRight}>
             <View style={styles.netPill}>
               <View style={[styles.netDot, { backgroundColor: GREEN }]} />
-              <Text style={styles.netPillText}>DEVNET</Text>
+              <Text style={styles.netPillText}>MAINNET</Text>
             </View>
           </View>
         </View>
@@ -691,7 +691,7 @@ export function PrivyWalletScreen() {
             <View style={styles.receiveHero}>
               <Text style={styles.receiveHeading}>SOL INGRESS PORTAL</Text>
               <Text style={styles.receiveSub}>
-                Scan or share the address below. Only send SOL on Solana Devnet.
+                Scan or share the address below. Only send SOL on Solana Mainnet.
               </Text>
             </View>
 
@@ -711,7 +711,7 @@ export function PrivyWalletScreen() {
               </View>
               <View style={styles.qrChainRow}>
                 <Text style={styles.qrChainGlyph}>◎</Text>
-                <Text style={styles.qrChainText}>SOLANA · DEVNET</Text>
+                <Text style={styles.qrChainText}>SOLANA · MAINNET</Text>
               </View>
             </View>
 
@@ -734,7 +734,7 @@ export function PrivyWalletScreen() {
             <View style={styles.warnCard}>
               <Ionicons name="warning-outline" size={16} color={GOLD} />
               <Text style={styles.warnText}>
-                This is a devnet address. Mainnet SOL sent here will be lost.
+                This is a Solana mainnet address. Only send real SOL on mainnet.
               </Text>
             </View>
           </ScrollView>
@@ -766,7 +766,7 @@ export function PrivyWalletScreen() {
             <Text style={styles.panelTitle}>Send SOL</Text>
             <View style={styles.netPill}>
               <View style={[styles.netDot, { backgroundColor: GREEN }]} />
-              <Text style={styles.netPillText}>DEVNET</Text>
+              <Text style={styles.netPillText}>MAINNET</Text>
             </View>
           </View>
           <ScrollView
@@ -871,7 +871,7 @@ export function PrivyWalletScreen() {
             </Pressable>
 
             <Text style={styles.footnote}>
-              ⟡ Signed locally by your embedded key, broadcast over Solana devnet RPC.
+              ⟡ Signed locally by your embedded key, broadcast over Solana mainnet RPC.
             </Text>
           </ScrollView>
         </KeyboardAvoidingView>

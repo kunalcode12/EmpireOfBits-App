@@ -50,7 +50,7 @@ The Play tab is the main game library and points console.
 
 - Shows the current points balance.
 - Lets users refresh points from the backend.
-- Supports buying points with SOL on Solana devnet.
+- Supports buying points with SOL on Solana mainnet.
 - Supports selling points back through the backend payout flow.
 - Shows Chess and Tic Tac Toe as active cabinets.
 - Shows Snake, Pong, and Tetris as locked future cabinets.
@@ -112,19 +112,19 @@ This makes the mobile chess experience livestream-aware today. The app is not on
 
 ### Solana Wallet
 
-The Wallet tab is a devnet Solana vault powered by Privy embedded Solana wallets and `@solana/web3.js`.
+The Wallet tab is a mainnet Solana vault powered by Privy embedded Solana wallets and `@solana/web3.js`.
 
 Wallet features:
 
 - Privy embedded Solana wallet creation.
 - Cached wallet address persistence.
-- Devnet SOL balance display.
+- Mainnet SOL balance display.
 - Pull-to-refresh balance updates.
 - Copy address.
 - Receive panel with QR code.
 - Fund wallet through Privy UI.
 - Send SOL by signing and broadcasting a transaction from the embedded wallet.
-- Devnet RPC configuration through `EXPO_PUBLIC_SOLANA_RPC_URL`.
+- Mainnet RPC configuration through `EXPO_PUBLIC_SOLANA_RPC_URL`.
 
 This wallet is the base for the Empire of Bits economy: points purchases, future wagers, future rewards, and future on-chain replay or achievement flows.
 
@@ -214,7 +214,7 @@ Privy Auth
 Wallet
   -> Create embedded Solana wallet
   -> View balance
-  -> Receive / fund / send devnet SOL
+  -> Receive / fund / send mainnet SOL
 
 Profile
   -> Account, points, stats, Solana identity, reactive identity
@@ -330,7 +330,7 @@ Recommended app configuration:
 
 ```bash
 EXPO_PUBLIC_API_BASE_URL=http://localhost:3000
-EXPO_PUBLIC_SOLANA_RPC_URL=https://api.devnet.solana.com
+EXPO_PUBLIC_SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 EXPO_PUBLIC_WEBSOCKET_URL=<vorld-session-websocket-url>
 EXPO_PUBLIC_PRIVY_APP_ID=<privy-app-id>
 EXPO_PUBLIC_PRIVY_CLIENT_ID=<privy-mobile-client-id>
@@ -340,7 +340,7 @@ Notes:
 
 - The chess backend defaults to localhost or the Expo host when `EXPO_PUBLIC_API_BASE_URL` is not set.
 - Android emulators use `10.0.2.2:3000` for local backend fallback.
-- The Solana wallet defaults to public devnet RPC.
+- The Solana wallet defaults to public mainnet-beta RPC; use a paid RPC (Helius / Triton / QuickNode) for production.
 - Vorld auth currently points at `https://auth.thevorld.com`.
 - Vorld reactive sessions currently point at `https://dev.reactive.thevorld.com`.
 

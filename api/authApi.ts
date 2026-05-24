@@ -40,7 +40,7 @@ const extra = Constants.expoConfig?.extra as
   | Record<string, string | undefined>
   | undefined;
 
-const DEPLOYED_API_BASE_URL = "https://empireofbits-app-4.onrender.com";
+const DEPLOYED_API_BASE_URL = "http://localhost:3000";
 
 export const API_BASE_URL =
   process.env?.EXPO_PUBLIC_API_BASE_URL ??
@@ -154,6 +154,7 @@ export interface RegisterOrLoginResult {
 export const registerOrLogin = async (
   payload: RegisterOrLoginPayload,
 ): Promise<RegisterOrLoginResult> => {
+  console.log('Registering or Logging in with payload:', payload);
   const response = await request<AuthResponse>(
     "/api/v1/user/register-or-login",
     {
@@ -161,6 +162,7 @@ export const registerOrLogin = async (
       body: JSON.stringify(payload),
     },
   );
+  console.log('Response:', response);
   return {
     user: toStoredUser(response),
     points: response.points,
