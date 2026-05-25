@@ -40,7 +40,7 @@ const extra = Constants.expoConfig?.extra as
   | Record<string, string | undefined>
   | undefined;
 
-const DEPLOYED_API_BASE_URL = "http://localhost:3000";
+const DEPLOYED_API_BASE_URL = "https://empireofbits-app-mgz0.onrender.com";
 
 export const API_BASE_URL =
   process.env?.EXPO_PUBLIC_API_BASE_URL ??

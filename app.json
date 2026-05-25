@@ -26,7 +26,7 @@
     "extra": {
       "privyAppId": "",
       "privyClientId": "",
-      "API_BASE_URL": "https://empireofbits-app-4.onrender.com",
+      "API_BASE_URL": "https://empireofbits-app-mgz0.onrender.com",
       "router": {},
       "eas": {
         "projectId": "92c91e5e-e3e9-4ef1-a0db-21663b8f2058"
