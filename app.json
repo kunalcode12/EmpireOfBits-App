@@ -26,10 +26,10 @@
     "extra": {
       "privyAppId": "",
       "privyClientId": "",
-      "API_BASE_URL": "https://empireofbits-app-mgz0.onrender.com",
+      "API_BASE_URL": "https://empire-of-bits-backend.onrender.com",
       "router": {},
       "eas": {
-        "projectId": "92c91e5e-e3e9-4ef1-a0db-21663b8f2058"
+        "projectId": "4a0a22cd-96de-463f-a58b-860e4fb1280d"
       }
     },
     "plugins": [
@@ -49,11 +49,13 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-font",
-      "expo-image"
+      "expo-image",
+      "expo-screen-orientation"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "owner": "kunal1221"
   }
 }

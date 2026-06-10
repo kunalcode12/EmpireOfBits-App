@@ -15,6 +15,8 @@ import { StyleSheet, Text, View, useColorScheme } from 'react-native';
 import 'react-native-reanimated';
 
 import { PRIVY_APP_ID, PRIVY_CLIENT_ID, privyConfigured } from '../constants/privyConfig';
+import { ArenaProvider } from '../store/ArenaContext';
+import { ArenaInventoryProvider } from '../store/ArenaInventoryContext';
 import { AuthProvider } from '../store/AuthContext';
 import { GameProvider } from '../store/GameContext';
 import { PointsProvider } from '../store/PointsContext';
@@ -83,15 +85,23 @@ export default function RootLayout() {
         <AuthProvider>
           <PointsProvider>
             <GameProvider>
-              <Stack initialRouteName="(tabs)" screenOptions={{ headerShown: false, animation: 'fade' }}>
-                <Stack.Screen name="privy-auth" />
-                <Stack.Screen name="index" />
-                <Stack.Screen name="auth-flow" />
-                <Stack.Screen name="computer-chess" />
-                <Stack.Screen name="computer-result" />
-                <Stack.Screen name="(tabs)" />
-              </Stack>
-              <StatusBar style="light" />
+              <ArenaProvider>
+                <ArenaInventoryProvider>
+                  <Stack initialRouteName="(tabs)" screenOptions={{ headerShown: false, animation: 'fade' }}>
+                    <Stack.Screen name="privy-auth" />
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="auth-flow" />
+                    <Stack.Screen name="computer-chess" />
+                    <Stack.Screen name="computer-result" />
+                    <Stack.Screen name="arena-lobby" />
+                    <Stack.Screen name="arena-blitz" options={{ gestureEnabled: false }} />
+                    <Stack.Screen name="arena-result" />
+                    <Stack.Screen name="arena-shop" />
+                    <Stack.Screen name="(tabs)" />
+                  </Stack>
+                  <StatusBar style="light" />
+                </ArenaInventoryProvider>
+              </ArenaProvider>
             </GameProvider>
           </PointsProvider>
         </AuthProvider>

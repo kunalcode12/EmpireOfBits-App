@@ -398,6 +398,25 @@ function ComingSoonIllustration({
   );
 }
 
+function ArenaIllustration() {
+  return (
+    <View style={tileStyles.arenaWrap}>
+      <View style={tileStyles.arenaFloor}>
+        <View style={[tileStyles.arenaPlayer, { backgroundColor: '#00F5FF', top: 8, left: 8 }]} />
+        <View style={[tileStyles.arenaPlayer, { backgroundColor: '#FF006E', bottom: 8, right: 8 }]} />
+        <View style={[tileStyles.arenaDot, { top: 20, left: 30 }]} />
+        <View style={[tileStyles.arenaDot, { top: 28, left: 36 }]} />
+        <View style={[tileStyles.arenaDot, { bottom: 14, right: 24 }]} />
+        <View style={[tileStyles.arenaObstacle, { top: 22, right: 18 }]} />
+        <View style={[tileStyles.arenaObstacle, { bottom: 22, left: 18 }]} />
+      </View>
+      <View style={tileStyles.arenaNewBadge}>
+        <Text style={tileStyles.arenaNewText}>NEW</Text>
+      </View>
+    </View>
+  );
+}
+
 // ─── Game Card ───────────────────────────────────────────────────────────────
 
 type GameCardProps = {
@@ -1558,6 +1577,15 @@ export function ArcadeCenterScreen() {
             reactiveActive={reactiveOn}
           />
           <GameCard
+            title="ARENA BLITZ"
+            subtitle="1v1 SHOOTER · 50 PTS"
+            borderColor="#FF006E"
+            glowColor="#FF006E"
+            illustration={<ArenaIllustration />}
+            pixelLoaded={pixelLoaded}
+            onPress={() => router.push('/arena-lobby' as never)}
+          />
+          <GameCard
             title="TIC TAC TOE"
             subtitle="ARCADE · LOCKED"
             borderColor="#3a3a3a"
@@ -2270,6 +2298,53 @@ const tileStyles = StyleSheet.create({
     backgroundColor: NEON_YELLOW,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  arenaWrap: {
+    width: 88,
+    height: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  arenaFloor: {
+    width: 80,
+    height: 80,
+    backgroundColor: '#1a1a1a',
+    borderWidth: 2,
+    borderColor: '#FF006E',
+  },
+  arenaPlayer: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  arenaDot: {
+    position: 'absolute',
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#FFE600',
+  },
+  arenaObstacle: {
+    position: 'absolute',
+    width: 12,
+    height: 12,
+    backgroundColor: '#444',
+  },
+  arenaNewBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: '#FF006E',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  arenaNewText: {
+    fontSize: 7,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: 1,
   },
 });
 
