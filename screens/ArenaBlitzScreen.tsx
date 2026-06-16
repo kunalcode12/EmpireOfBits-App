@@ -91,7 +91,7 @@ export default function ArenaBlitzScreen() {
         }
         sendInput(dxRef.current, dyRef.current, shootRef.current, aimRef.current.x, aimRef.current.y);
       }
-    }, 33);
+    }, 30);
     return () => clearInterval(interval);
   }, [arena.phase, sendInput]);
 

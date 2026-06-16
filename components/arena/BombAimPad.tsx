@@ -54,7 +54,9 @@ export default function BombAimPad({ itemId, type, color, count, size = 150, onA
       onPanResponderRelease: () => {
         Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false, friction: 5 }).start();
         const l = last.current;
-        if (l.power > 0.06) {
+        // Any deliberate drag throws — even a tiny one, so you can drop a bomb
+        // close to yourself / at a short distance.
+        if (l.power > 0.02) {
           onThrow(itemId, l.nx, l.ny, l.power);
         }
       },

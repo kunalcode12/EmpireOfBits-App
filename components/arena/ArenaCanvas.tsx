@@ -512,24 +512,27 @@ export default function ArenaCanvas({
       lastTsRef.current = ts;
       nowRef.current = ts;
 
-      const lerp = 0.32;
-      // facing rotates a touch faster so aim feels responsive but never snaps
-      const fLerp = 0.4;
+      // YOU follow the server tightly (snappy, responsive controls); the
+      // OPPONENT is smoothed a bit more (you don't control them, so hide jitter).
+      const SELF_LERP = 0.5;
+      const OPP_LERP = 0.32;
+      const SELF_FACE = 0.55;
+      const OPP_FACE = 0.4;
       const ds = dispSelfRef.current;
       const tsf = targetSelfRef.current;
       if (ds && tsf) {
-        ds.x += (tsf.x - ds.x) * lerp;
-        ds.y += (tsf.y - ds.y) * lerp;
-        ds.facingX += (tsf.facingX - ds.facingX) * fLerp;
-        ds.facingY += (tsf.facingY - ds.facingY) * fLerp;
+        ds.x += (tsf.x - ds.x) * SELF_LERP;
+        ds.y += (tsf.y - ds.y) * SELF_LERP;
+        ds.facingX += (tsf.facingX - ds.facingX) * SELF_FACE;
+        ds.facingY += (tsf.facingY - ds.facingY) * SELF_FACE;
       }
       const dop = dispOppRef.current;
       const top = targetOppRef.current;
       if (dop && top) {
-        dop.x += (top.x - dop.x) * lerp;
-        dop.y += (top.y - dop.y) * lerp;
-        dop.facingX += (top.facingX - dop.facingX) * fLerp;
-        dop.facingY += (top.facingY - dop.facingY) * fLerp;
+        dop.x += (top.x - dop.x) * OPP_LERP;
+        dop.y += (top.y - dop.y) * OPP_LERP;
+        dop.facingX += (top.facingX - dop.facingX) * OPP_FACE;
+        dop.facingY += (top.facingY - dop.facingY) * OPP_FACE;
       }
       for (const p of projRef.current.values()) {
         p.x += p.vx * dt;
@@ -577,8 +580,8 @@ export default function ArenaCanvas({
   let camY = clampN(focus.y - visibleH / 2, 0, Math.max(0, GAME_SIZE - visibleH));
   // smooth the camera a touch
   if (!camRef.current) camRef.current = { x: camX, y: camY };
-  camRef.current.x += (camX - camRef.current.x) * 0.4;
-  camRef.current.y += (camY - camRef.current.y) * 0.4;
+  camRef.current.x += (camX - camRef.current.x) * 0.55;
+  camRef.current.y += (camY - camRef.current.y) * 0.55;
   camX = camRef.current.x;
   camY = camRef.current.y;
 
@@ -823,7 +826,10 @@ export default function ArenaCanvas({
       dx /= mag;
       dy /= mag;
     }
-    const dist = 128 + clampN(bombAim.power, 0, 1) * 190;
+    // Matches the server throw model: grenade spawns ~21u in front, then travels
+    // (MIN_THROW 150 + power*1500) * ~0.236 friction factor at 30Hz. So it lands
+    // ~56u away (close, near your feet) up to ~410u (far across the arena).
+    const dist = 56 + clampN(bombAim.power, 0, 1) * 354;
     const sx = ds.x;
     const sy = ds.y;
     const lx = sx + dx * dist;
