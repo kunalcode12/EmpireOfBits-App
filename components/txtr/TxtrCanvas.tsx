@@ -99,14 +99,16 @@ interface CarProps {
   facing: 'front' | 'rear';
   rot?: number;
   opacity?: number;
+  /** Trucks are wider, longer and boxier, and carry a cargo container. */
+  truck?: boolean;
 }
 
-function CartoonCar({ x, y, laneUnit, pal, facing, rot = 0, opacity = 1 }: CarProps) {
-  const W = laneUnit * 0.72;
+function CartoonCar({ x, y, laneUnit, pal, facing, rot = 0, opacity = 1, truck }: CarProps) {
+  const W = laneUnit * (truck ? 0.86 : 0.72);
   if (W < 4) return null;
-  const H = W * 1.5;
+  const H = W * (truck ? 1.85 : 1.5);
   const lw = Math.max(2, W * 0.07);
-  const topW = W * 0.66; // far end narrower (perspective)
+  const topW = W * (truck ? 0.9 : 0.66); // far end narrower (perspective)
   const nearY = H * 0.5;
   const farY = -H * 0.5;
   const faceY = H * 0.18; // end-face spans faceY..nearY
@@ -226,6 +228,32 @@ function CartoonCar({ x, y, laneUnit, pal, facing, rot = 0, opacity = 1 }: CarPr
           strokeWidth={lw}
           strokeLinejoin="round"
         />
+
+        {/* cargo container — what makes a truck read as a rolling wall */}
+        {truck && (
+          <>
+            <Rect
+              x={-widthAt(farY + H * 0.3) * 0.44}
+              y={farY + H * 0.05}
+              width={widthAt(farY + H * 0.3) * 0.88}
+              height={H * 0.46}
+              rx={W * 0.06}
+              fill={pal.roof}
+              stroke={INK}
+              strokeWidth={lw}
+              strokeLinejoin="round"
+            />
+            <Path
+              d={
+                `M${n1(-widthAt(farY + H * 0.3) * 0.36)} ${n1(farY + H * 0.2)}L${n1(widthAt(farY + H * 0.3) * 0.36)} ${n1(farY + H * 0.2)}` +
+                `M${n1(-widthAt(farY + H * 0.3) * 0.36)} ${n1(farY + H * 0.34)}L${n1(widthAt(farY + H * 0.3) * 0.36)} ${n1(farY + H * 0.34)}`
+              }
+              stroke={pal.shade}
+              strokeWidth={Math.max(1, lw * 0.7)}
+              strokeOpacity={0.6}
+            />
+          </>
+        )}
 
         {/* lights + details on the end-face */}
         {facing === 'front' ? (
@@ -377,6 +405,45 @@ function powerupGlyph(kind: string, r: number): string {
     `M0 ${n1(-r * 0.62)}L${n1(r * 0.17)} ${n1(-r * 0.17)}L${n1(r * 0.62)} 0` +
     `L${n1(r * 0.17)} ${n1(r * 0.17)}L0 ${n1(r * 0.62)}L${n1(-r * 0.17)} ${n1(r * 0.17)}` +
     `L${n1(-r * 0.62)} 0L${n1(-r * 0.17)} ${n1(-r * 0.17)}Z`
+  );
+}
+
+/* --- Road cone ------------------------------------------------------------ */
+// Non-fatal hazard: clip it and you scrub speed. Drawn as a striped cone on a
+// base so it reads clearly as "not a car".
+function Cone({ x, y, laneUnit }: { x: number; y: number; laneUnit: number }) {
+  const w = laneUnit * 0.34;
+  if (w < 3) return null;
+  const h = w * 1.5;
+  const lw = Math.max(1.5, w * 0.14);
+  return (
+    <G transform={`translate(${n1(x)} ${n1(y)})`}>
+      <Ellipse cx={0} cy={0} rx={w * 0.62} ry={w * 0.22} fill="rgba(0,0,0,0.2)" />
+      {/* base slab */}
+      <Rect
+        x={-w * 0.6}
+        y={-h * 0.16}
+        width={w * 1.2}
+        height={h * 0.16}
+        rx={w * 0.1}
+        fill="#d4600c"
+        stroke={INK}
+        strokeWidth={lw}
+      />
+      {/* cone body */}
+      <Path
+        d={`M0 ${n1(-h)}L${n1(w * 0.44)} ${n1(-h * 0.16)}L${n1(-w * 0.44)} ${n1(-h * 0.16)}Z`}
+        fill="#ff8c32"
+        stroke={INK}
+        strokeWidth={lw}
+        strokeLinejoin="round"
+      />
+      {/* reflective band */}
+      <Path
+        d={`M${n1(-w * 0.27)} ${n1(-h * 0.52)}L${n1(w * 0.27)} ${n1(-h * 0.52)}L${n1(w * 0.21)} ${n1(-h * 0.66)}L${n1(-w * 0.21)} ${n1(-h * 0.66)}Z`}
+        fill="#fffaf0"
+      />
+    </G>
   );
 }
 
@@ -570,19 +637,26 @@ function TxtrCanvasInner({ world, car, width, height, onFrame, fontFamily }: Txt
     const it = items[i];
     const proj = project(w, h, it.ref.depth, it.ref.lane);
     if (it.kind === 'car') {
-      const bob = Math.sin(time * 7 + it.ref.bob) * proj.laneUnit * 0.02;
-      objects.push(
-        <CartoonCar
-          key={`t${i}`}
-          x={proj.x}
-          y={proj.y + bob}
-          laneUnit={proj.laneUnit}
-          pal={it.ref.pal}
-          facing="front"
-          // traffic leans into its own lane changes
-          rot={clamp(it.ref.bank * 0.14, -0.16, 0.16)}
-        />,
-      );
+      if (it.ref.kind === 'cone') {
+        objects.push(
+          <Cone key={`t${i}`} x={proj.x} y={proj.y} laneUnit={proj.laneUnit} />,
+        );
+      } else {
+        const bob = Math.sin(time * 7 + it.ref.bob) * proj.laneUnit * 0.02;
+        objects.push(
+          <CartoonCar
+            key={`t${i}`}
+            x={proj.x}
+            y={proj.y + bob}
+            laneUnit={proj.laneUnit}
+            pal={it.ref.pal}
+            facing="front"
+            truck={it.ref.kind === 'truck'}
+            // traffic leans into its own lane changes
+            rot={clamp(it.ref.bank * 0.14, -0.16, 0.16)}
+          />,
+        );
+      }
     } else if (it.ref.kind === 'coin') {
       objects.push(
         <Coin

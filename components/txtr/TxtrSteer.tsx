@@ -1,26 +1,41 @@
 import React, { useMemo, useRef } from 'react';
 import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { TXTR } from '../../lib/txtr/constants';
+import { HardShadow } from './overlays/Panel';
+
 // ─── Steering ────────────────────────────────────────────────────────────────
-// Three redundant inputs:
-//   1. the ◀ ▶ buttons (the `.steer` circles from the web build),
-//   2. tapping the left / right third of the play field,
-//   3. a horizontal drag anywhere on the play field.
-// The web build steered with arrow keys and a trackpad swipe; on a phone touch
-// has to carry all of it.
+// Both arrows live together in the bottom-left corner, thumb-width apart, so one
+// hand steers while the other works the pedals on the right. A horizontal drag
+// anywhere on the road still works as a shortcut.
 
 const SWIPE_STEP = 28; // px of travel per lane change
-const TAP_SLOP = 10;
 
 interface TxtrSteerProps {
   onSteer: (dir: number) => void;
   width: number;
   height: number;
-  /** Distance from the bottom of the play field to the steer buttons. */
+  /** Distance from the bottom of the play field to the pad. */
   buttonsBottom: number;
-  /** Horizontal inset for the buttons (safe area / notch in landscape). */
+  /** Horizontal inset (safe area / notch in landscape). */
   sidePad: number;
   enabled: boolean;
+}
+
+function ArrowKey({ dir, onPress }: { dir: -1 | 1; onPress: (d: number) => void }) {
+  return (
+    <Pressable onPressIn={() => onPress(dir)} hitSlop={6}>
+      {({ pressed }) => (
+        <HardShadow depth={6} radius={16} pressed={pressed}>
+          <View style={[styles.key, pressed && styles.keyPressed]}>
+            <Text style={styles.keyGlyph} allowFontScaling={false}>
+              {dir === -1 ? '◀' : '▶'}
+            </Text>
+          </View>
+        </HardShadow>
+      )}
+    </Pressable>
+  );
 }
 
 export default function TxtrSteer({
@@ -42,9 +57,9 @@ export default function TxtrSteer({
   const responder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => enabledRef.current,
+        onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_e, g) =>
-          enabledRef.current && Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+          enabledRef.current && Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.4,
         onPanResponderGrant: () => {
           lastFire.current = 0;
         },
@@ -59,13 +74,6 @@ export default function TxtrSteer({
             lastFire.current -= SWIPE_STEP;
           }
         },
-        onPanResponderRelease: (e, g) => {
-          if (!enabledRef.current) return;
-          if (Math.abs(g.dx) > TAP_SLOP || Math.abs(g.dy) > TAP_SLOP) return; // was a drag
-          const x = e.nativeEvent.locationX / Math.max(1, widthRef.current);
-          if (x < 0.33) steerRef.current(-1);
-          else if (x > 0.67) steerRef.current(1);
-        },
         onPanResponderTerminationRequest: () => true,
       }),
     [],
@@ -73,36 +81,13 @@ export default function TxtrSteer({
 
   return (
     <View style={[styles.layer, { height }]} pointerEvents="box-none">
-      <View style={StyleSheet.absoluteFill} {...responder.panHandlers} />
+      <View style={StyleSheet.absoluteFill} {...responder.panHandlers} pointerEvents="box-only" />
       {enabled && (
-        <>
-          <Pressable
-            style={({ pressed }) => [
-              styles.steer,
-              { bottom: buttonsBottom, left: sidePad },
-              pressed && styles.steerPressed,
-            ]}
-            onPressIn={() => onSteer(-1)}
-            hitSlop={8}
-          >
-            <Text style={styles.steerGlyph} allowFontScaling={false}>
-              ◀
-            </Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.steer,
-              { bottom: buttonsBottom, right: sidePad },
-              pressed && styles.steerPressed,
-            ]}
-            onPressIn={() => onSteer(1)}
-            hitSlop={8}
-          >
-            <Text style={styles.steerGlyph} allowFontScaling={false}>
-              ▶
-            </Text>
-          </Pressable>
-        </>
+        <View style={[styles.pad, { left: sidePad, bottom: buttonsBottom }]}>
+          <ArrowKey dir={-1} onPress={onSteer} />
+          <View style={styles.gap} />
+          <ArrowKey dir={1} onPress={onSteer} />
+        </View>
       )}
     </View>
   );
@@ -115,25 +100,31 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
-  steer: {
+  pad: {
     position: 'absolute',
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    borderWidth: 3,
-    borderColor: '#ffffff',
-    backgroundColor: 'rgba(27,27,43,0.55)',
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  gap: {
+    width: 10,
+  },
+  key: {
+    width: 66,
+    height: 60,
+    borderRadius: 16,
+    borderWidth: 3.5,
+    borderColor: TXTR.ink,
+    backgroundColor: TXTR.paper,
     alignItems: 'center',
     justifyContent: 'center',
-    opacity: 0.6,
   },
-  steerPressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.92 }],
+  keyPressed: {
+    backgroundColor: TXTR.yellow,
   },
-  steerGlyph: {
-    color: '#ffffff',
-    fontSize: 22,
+  keyGlyph: {
+    color: TXTR.ink,
+    fontSize: 24,
     fontWeight: '900',
+    marginTop: -2,
   },
 });

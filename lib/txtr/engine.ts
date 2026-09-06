@@ -9,12 +9,29 @@
 // and near misses alone.
 
 import {
+  BOOST_SURGE,
+  BOOST_TOP_BONUS,
+  BRAKE_DECEL,
+  BRAKE_FLOOR,
   CAM_DEPTH,
   CENTER_LANE,
+  COAST_RATE,
   COLLIDE_LANE,
   COMBO_TIME,
+  CONE_CHANCE,
+  CONE_PRESSURE,
+  CONE_SPEED_PENALTY,
+  CONGESTION_RELIEF,
   DEPTH_PER_SPEED,
+  FAST_RATIO,
   HORIZON_RATIO,
+  MAX_TRAFFIC,
+  MIN_SPAWN_GAP,
+  SLALOM_CHANCE,
+  THROTTLE_ACCEL,
+  THROTTLE_TOP,
+  TRUCK_CHANCE,
+  TRUCK_PRESSURE,
   LANE_CHANGE_SPEED,
   LANE_CLEARANCE,
   LANE_COUNT,
@@ -56,7 +73,11 @@ export type GameState = 'menu' | 'playing' | 'paused' | 'gameover';
 
 export type PickupKind = 'coin' | 'shield' | 'magnet' | 'boost';
 
+/** What is sitting in the road: normal traffic, a slow wide truck, or cones. */
+export type TrafficKind = 'car' | 'truck' | 'cone';
+
 export interface TrafficCar {
+  kind: TrafficKind;
   /** Fractional while a car is mid-lane-change. */
   lane: number;
   /** The lane this car is driving toward. */
@@ -128,7 +149,15 @@ export interface World {
   height: number;
   time: number;
   scroll: number;
+  /** Actual road speed — what the pedals move. */
   speed: number;
+  /** The self-escalating baseline the pedals push against. */
+  cruise: number;
+  /** speed / cruise, for the gauge and speed-scaled rewards. */
+  speedRatio: number;
+  /** Pedal state, written by the screen every frame. */
+  throttle: boolean;
+  brake: boolean;
   baseSpeed: number;
   score: number;
   distance: number;
@@ -139,7 +168,10 @@ export interface World {
   traffic: TrafficCar[];
   pickups: Pickup[];
   particles: Particle[];
-  spawnTimer: number;
+  /** Distance banked toward the next wave, in depth units. */
+  spawnMeter: number;
+  /** Road distance until the next wave. */
+  spawnGap: number;
   combo: number;
   mult: number;
   comboTimer: number;
@@ -188,6 +220,21 @@ export const projectWorld = (w: World, depth: number, lane: number): Projection 
 
 export const mphOf = (speed: number): number => Math.round(38 + speed * 1.42);
 
+/**
+ * Spacing to the next wave, in depth units. Derived from the difficulty's
+ * seconds-per-wave at its own start speed, so the feel at cruise matches the
+ * original pacing while the pedals change how fast you eat through it.
+ */
+function nextSpawnGap(w: World): number {
+  const heat = w.pressure * w.difficulty.pressureScale;
+  const base = w.difficulty.spawnBase * w.difficulty.startSpeed * DEPTH_PER_SPEED;
+  const gap = base * (1 - clamp(heat, 0, 1.8) * PRESSURE_SPAWN);
+  return Math.max(MIN_SPAWN_GAP, gap) * rand(w.rng, 0.88, 1.12);
+}
+
+const startingGap = (difficulty: Difficulty): number =>
+  Math.max(MIN_SPAWN_GAP, difficulty.spawnBase * difficulty.startSpeed * DEPTH_PER_SPEED);
+
 /* --- Construction --------------------------------------------------------- */
 
 export function createWorld(width: number, height: number, difficulty: Difficulty): World {
@@ -198,6 +245,10 @@ export function createWorld(width: number, height: number, difficulty: Difficult
     time: 0,
     scroll: 0,
     speed: difficulty.startSpeed,
+    cruise: difficulty.startSpeed,
+    speedRatio: 1,
+    throttle: false,
+    brake: false,
     baseSpeed: difficulty.startSpeed,
     score: 0,
     distance: 0,
@@ -208,7 +259,8 @@ export function createWorld(width: number, height: number, difficulty: Difficult
     traffic: [],
     pickups: [],
     particles: [],
-    spawnTimer: 0.8,
+    spawnMeter: 0,
+    spawnGap: startingGap(difficulty),
     combo: 0,
     mult: 1,
     comboTimer: 0,
@@ -254,6 +306,10 @@ export function startRun(w: World, opts: StartRunOptions): void {
   w.time = 0;
   w.scroll = 0;
   w.speed = w.baseSpeed;
+  w.cruise = w.baseSpeed;
+  w.speedRatio = 1;
+  w.throttle = false;
+  w.brake = false;
   w.score = 0;
   w.distance = 0;
   w.coins = 0;
@@ -263,7 +319,8 @@ export function startRun(w: World, opts: StartRunOptions): void {
   w.traffic = [];
   w.pickups = [];
   w.particles = [];
-  w.spawnTimer = 1.0;
+  w.spawnMeter = 0;
+  w.spawnGap = startingGap(w.difficulty);
   w.combo = 0;
   w.mult = 1;
   w.comboTimer = 0;
@@ -287,6 +344,10 @@ export function resetToMenu(w: World): void {
   w.time = 0;
   w.scroll = 0;
   w.speed = w.difficulty.startSpeed;
+  w.cruise = w.difficulty.startSpeed;
+  w.speedRatio = 1;
+  w.throttle = false;
+  w.brake = false;
   w.baseSpeed = w.difficulty.startSpeed;
   w.score = 0;
   w.distance = 0;
@@ -297,7 +358,8 @@ export function resetToMenu(w: World): void {
   w.traffic = [];
   w.pickups = [];
   w.particles = [];
-  w.spawnTimer = 0.8;
+  w.spawnMeter = 0;
+  w.spawnGap = startingGap(w.difficulty);
   w.combo = 0;
   w.mult = 1;
   w.comboTimer = 0;
@@ -427,8 +489,31 @@ function patternsFor(w: World, wide: number): number[][] {
 
 export function spawnWave(w: World): void {
   const rng = w.rng;
+
+  // Slow trucks fall back into the spawn zone and later waves pile in behind
+  // them. Look at what is already sitting up there before adding more, or the
+  // road can end up genuinely impassable.
+  const busy = new Set<number>();
+  for (const t of w.traffic) {
+    if (t.depth > SPAWN_DEPTH - 3 && t.depth < SPAWN_DEPTH + 5.5) {
+      busy.add(Math.round(t.laneTarget));
+      busy.add(Math.round(t.lane));
+    }
+  }
+  // Too congested already — let it thin out rather than stacking another wave.
+  if (busy.size >= LANE_COUNT - 1) return;
+  if (w.traffic.length >= MAX_TRAFFIC) return;
+
   const drift = pick(rng, [-1, 0, 1]);
   w.safeLane = clamp(w.safeLane + drift, 0, LANE_COUNT - 1);
+  // The safe lane has to be genuinely clear, not just clear of *this* wave.
+  if (busy.has(w.safeLane)) {
+    const free: number[] = [];
+    for (let l = 0; l < LANE_COUNT; l += 1) if (!busy.has(l)) free.push(l);
+    if (!free.length) return;
+    free.sort((a, b) => Math.abs(a - w.safeLane) - Math.abs(b - w.safeLane));
+    w.safeLane = free[0];
+  }
 
   // Wider roadblocks as pressure builds; 3-wide only once you are deep in it.
   const heat = w.pressure * w.difficulty.pressureScale;
@@ -448,18 +533,49 @@ export function spawnWave(w: World): void {
   const open: number[] = [];
   for (let l = 0; l < LANE_COUNT; l += 1) if (!blocked.includes(l)) open.push(l);
 
+  const truckChance = TRUCK_CHANCE + heat * TRUCK_PRESSURE;
   for (const lane of blocked) {
+    // Trucks are slow, wide and never merge — rolling walls you have to plan around.
+    const isTruck = rng() < truckChance;
     w.traffic.push({
+      kind: isTruck ? 'truck' : 'car',
       lane,
       laneTarget: lane,
       depth: SPAWN_DEPTH + rand(rng, 0, 2.5),
       pal: pick(rng, TRAFFIC_PALETTE),
       bob: rand(rng, 0, Math.PI * 2),
       passed: false,
-      speedFactor: rand(rng, TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX),
+      speedFactor: isTruck
+        ? rand(rng, TRAFFIC_SPEED_MIN * 0.82, TRAFFIC_SPEED_MIN)
+        : rand(rng, TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX),
       swerveTimer: rand(rng, SWERVE_COOLDOWN_MIN, SWERVE_COOLDOWN_MAX),
       bank: 0,
     });
+  }
+
+  // Cone clusters: not fatal, but clipping them costs speed and your combo.
+  // They never take the safe lane, so a clean line always exists.
+  if (open.length > 1 && rng() < CONE_CHANCE + heat * CONE_PRESSURE) {
+    const coneLanes = open.filter((l) => l !== w.safeLane);
+    if (coneLanes.length) {
+      const lane = pick(rng, coneLanes);
+      const count = randInt(rng, 2, 3);
+      for (let i = 0; i < count; i += 1) {
+        w.traffic.push({
+          kind: 'cone',
+          lane,
+          laneTarget: lane,
+          depth: SPAWN_DEPTH + 1 + i * 0.7,
+          pal: TRAFFIC_PALETTE[3],
+          bob: rand(rng, 0, Math.PI * 2),
+          passed: false,
+          speedFactor: 1,
+          swerveTimer: Number.POSITIVE_INFINITY,
+          bank: 0,
+        });
+      }
+      open.splice(open.indexOf(lane), 1);
+    }
   }
 
   // reward lane: coins or (rarely) a power-up
@@ -473,13 +589,18 @@ export function spawnWave(w: World): void {
     } else if (roll < 0.05) {
       w.pickups.push(makePickup(w, lane, 'boost'));
     } else {
-      // Long coin chains thin out as the road heats up.
-      const chainChance = 0.5 - w.pressure * 0.16;
-      const chain = rng() < chainChance ? randInt(rng, 2, 4) : 1;
+      // Long coin chains thin out as the road heats up — but running hot pulls
+      // richer ones, so the throttle pays for the risk it creates.
+      const chainChance = 0.5 - w.pressure * 0.16 + (w.speedRatio > FAST_RATIO ? 0.22 : 0);
+      const bonus = w.speedRatio > FAST_RATIO ? 1 : 0;
+      const chain = rng() < chainChance ? randInt(rng, 2, 4) + bonus : 1;
+      // A slalom run weaves across lanes: more coins, but you have to work for them.
+      const slalom = chain > 2 && rng() < SLALOM_CHANCE;
       for (let i = 0; i < chain; i += 1) {
+        const weave = slalom && i > 0 ? (i % 2 === 1 ? 1 : -1) : 0;
         w.pickups.push({
           kind: 'coin',
-          lane,
+          lane: clamp(lane + weave, 0, LANE_COUNT - 1),
           depth: SPAWN_DEPTH + 1 + i * 0.85,
           spin: rand(rng, 0, Math.PI * 2),
           dead: false,
@@ -521,6 +642,47 @@ function leavesAnEscape(w: World, car: TrafficCar, lane: number): boolean {
   return false;
 }
 
+/**
+ * The guarantee that the road is always driveable. Cars close at their own
+ * speeds, so cars from different waves can drift into a band that blocks every
+ * lane. When that happens the car nearest the player's line eases off and drops
+ * back, opening a hole — it reads as a driver lifting off, and it means a clean
+ * line always exists by the time you get there.
+ */
+function relieveCongestion(w: World, dt: number): void {
+  // Scan well ahead of the player so blocks are resolved long before arrival.
+  for (let d = 1.2; d <= 12; d += 1.2) {
+    let inBand: TrafficCar[] | null = null;
+    for (const t of w.traffic) {
+      if (Math.abs(t.depth - d) >= 1.35) continue;
+      (inBand ??= []).push(t);
+    }
+    if (!inBand || inBand.length < LANE_COUNT) continue;
+
+    let hasGap = false;
+    for (let l = 0; l < LANE_COUNT; l += 1) {
+      let blocked = false;
+      for (const t of inBand) {
+        if (Math.abs(t.lane - l) < 0.85) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) {
+        hasGap = true;
+        break;
+      }
+    }
+    if (hasGap) continue;
+
+    let yielder = inBand[0];
+    for (const t of inBand) {
+      if (Math.abs(t.lane - w.currentLane) < Math.abs(yielder.lane - w.currentLane)) yielder = t;
+    }
+    yielder.depth += CONGESTION_RELIEF * dt;
+  }
+}
+
 function driveTraffic(w: World, car: TrafficCar, dt: number): void {
   if (car.lane !== car.laneTarget) {
     const step = LANE_CHANGE_SPEED * dt;
@@ -530,6 +692,8 @@ function driveTraffic(w: World, car: TrafficCar, dt: number): void {
     return;
   }
   car.bank *= Math.max(0, 1 - dt * 4);
+  // Trucks hold their lane and cones are bolted to the tarmac.
+  if (car.kind !== 'car') return;
   // Only cars still far up the road pick a new lane, so you always get warning.
   if (car.depth <= SWERVE_MIN_DEPTH) return;
   car.swerveTimer -= dt;
@@ -550,11 +714,25 @@ function driveTraffic(w: World, car: TrafficCar, dt: number): void {
 function onNearMiss(w: World, car: TrafficCar): void {
   w.run.nearMisses += 1;
   addCombo(w, 1);
-  const gained = addScore(w, 120);
+  // Shaving past at speed is worth more than crawling past.
+  const fast = w.speedRatio > FAST_RATIO;
+  const gained = addScore(w, 120 * (fast ? 1.6 : 1));
   sfx(w, 'nearMiss');
   const p = projectWorld(w, PLAYER_DEPTH, car.lane);
-  popup(w, `NEAR MISS +${gained}`, p.x, p.y - p.laneUnit, 'near');
-  spawnParticles(w, p.x, p.y, ['#ffffff', '#ffd23f'], 8, 2.2);
+  popup(w, fast ? `FLYING BY +${gained}` : `NEAR MISS +${gained}`, p.x, p.y - p.laneUnit, 'near');
+  spawnParticles(w, p.x, p.y, ['#ffffff', '#ffd23f'], fast ? 12 : 8, 2.2);
+}
+
+/** Cones do not end the run — they scrub your speed and kill the combo. */
+function onConeHit(w: World, cone: TrafficCar): void {
+  breakCombo(w);
+  w.speed = Math.max(w.cruise * BRAKE_FLOOR, w.speed * (1 - CONE_SPEED_PENALTY));
+  addShake(w, 9);
+  flash(w, 0.22);
+  sfx(w, 'shieldBreak');
+  const p = projectWorld(w, PLAYER_DEPTH, cone.lane);
+  popup(w, 'CONES!', p.x, p.y - p.laneUnit, 'ok');
+  spawnParticles(w, p.x, p.y, ['#ff8c32', '#ffffff', '#ffd23f'], 14, 2.6);
 }
 
 function collectPickup(w: World, p: Pickup): void {
@@ -581,7 +759,10 @@ function collectPickup(w: World, p: Pickup): void {
     }
     if (p.kind === 'boost') {
       w.boost = 7;
-      banner(w, 'x2 SCORE', '7 seconds', 'boost');
+      // Not just double score any more: it kicks you forward and lifts the
+      // speed ceiling, so the gas pedal does more while it lasts.
+      w.speed = Math.min(w.speed + BOOST_SURGE, w.cruise * (THROTTLE_TOP + BOOST_TOP_BONUS));
+      banner(w, 'NITRO · x2', 'Higher top speed', 'boost');
     }
   }
 }
@@ -634,8 +815,28 @@ export function update(w: World, dtRaw: number): void {
   w.time += dt;
   w.scroll += w.speed * dt;
   w.distance += w.speed * dt * 1.25;
+  // The road's own pace keeps climbing no matter what the driver does…
   const heat = w.pressure * w.difficulty.pressureScale;
-  w.speed += dt * (w.difficulty.ramp + heat * PRESSURE_RAMP);
+  w.cruise += dt * (w.difficulty.ramp + heat * PRESSURE_RAMP);
+
+  // …and the pedals ride above or below it. Both up, the car coasts back to
+  // cruise; the ✦ boost lifts the ceiling so flooring it goes even harder.
+  const ceiling = w.cruise * (THROTTLE_TOP + (w.boost > 0 ? BOOST_TOP_BONUS : 0));
+  const floorSpeed = w.cruise * BRAKE_FLOOR;
+  let target = w.cruise;
+  let rate = COAST_RATE;
+  if (w.throttle && !w.brake) {
+    target = ceiling;
+    rate = THROTTLE_ACCEL;
+  } else if (w.brake && !w.throttle) {
+    target = floorSpeed;
+    rate = BRAKE_DECEL;
+  }
+  if (w.speed < target) w.speed = Math.min(target, w.speed + rate * dt);
+  else if (w.speed > target) w.speed = Math.max(target, w.speed - rate * dt);
+  w.speed = clamp(w.speed, floorSpeed, ceiling);
+  w.speedRatio = w.speed / w.cruise;
+
   w.score += Math.floor(w.speed * dt * 3);
   w.currentLane = lerp(w.currentLane, w.targetLane, 1 - Math.exp(-13 * dt));
 
@@ -653,15 +854,16 @@ export function update(w: World, dtRaw: number): void {
   if (mph > w.run.topMph) w.run.topMph = mph;
 
   // spawn
-  w.spawnTimer -= dt;
-  if (w.spawnTimer <= 0) {
-    spawnWave(w);
-    const base = w.difficulty.spawnBase * (1 - clamp(heat, 0, 1.8) * PRESSURE_SPAWN);
-    const interval = Math.max(0.44, base - (w.speed - w.baseSpeed) * 0.006);
-    w.spawnTimer += interval * rand(w.rng, 0.88, 1.12);
-  }
-
   const closing = w.speed * DEPTH_PER_SPEED * dt;
+
+  // Obstacles are spaced along the *road*, not on a clock — this is what makes
+  // the throttle a real gamble: go faster and they arrive proportionally sooner.
+  w.spawnMeter += closing;
+  if (w.spawnMeter >= w.spawnGap) {
+    w.spawnMeter -= w.spawnGap;
+    spawnWave(w);
+    w.spawnGap = nextSpawnGap(w);
+  }
 
   // move traffic + collisions / near-miss
   for (const car of w.traffic) {
@@ -671,7 +873,14 @@ export function update(w: World, dtRaw: number): void {
     if (!car.passed && car.depth <= PLAYER_DEPTH) {
       car.passed = true;
       const laneDist = Math.abs(w.currentLane - car.lane);
-      if (laneDist < COLLIDE_LANE) {
+      if (car.kind === 'cone') {
+        // clipped, not crashed
+        if (laneDist < COLLIDE_LANE * 0.8 && w.invuln <= 0) onConeHit(w, car);
+        continue;
+      }
+      // A truck's tail is wider than a car's.
+      const hitWidth = car.kind === 'truck' ? COLLIDE_LANE * 1.15 : COLLIDE_LANE;
+      if (laneDist < hitWidth) {
         if (w.invuln > 0) {
           /* phasing through */
         } else if (w.shield) {
@@ -707,6 +916,8 @@ export function update(w: World, dtRaw: number): void {
       }
     }
   }
+
+  relieveCongestion(w, dt);
 
   w.traffic = w.traffic.filter((c) => c.depth > -2);
   w.pickups = w.pickups.filter((p) => p.depth > -2 && !p.dead);

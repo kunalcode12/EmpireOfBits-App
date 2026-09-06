@@ -23,6 +23,8 @@ export interface HudSnapshot {
   shield: boolean;
   magnet: number;
   boost: number;
+  /** speed / cruise — drives the pedal gauge. */
+  speedRatio: number;
 }
 
 interface TxtrHudProps {

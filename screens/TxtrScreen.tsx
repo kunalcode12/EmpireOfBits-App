@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TxtrCanvas from '../components/txtr/TxtrCanvas';
 import TxtrFx, { type TxtrFxHandle } from '../components/txtr/TxtrFx';
 import TxtrHud, { type HudSnapshot } from '../components/txtr/TxtrHud';
+import TxtrPedals from '../components/txtr/TxtrPedals';
 import TxtrSteer from '../components/txtr/TxtrSteer';
 import EntryOverlay from '../components/txtr/overlays/EntryOverlay';
 import GameOverOverlay, { type GameOverData } from '../components/txtr/overlays/GameOverOverlay';
@@ -214,6 +215,7 @@ export default function TxtrScreen() {
     shield: false,
     magnet: 0,
     boost: 0,
+    speedRatio: 1,
   });
 
   /* --- pausable scheduler ------------------------------------------------ */
@@ -273,6 +275,8 @@ export default function TxtrScreen() {
     const w = worldRef.current;
     if (!w) return;
     clearTasks();
+    w.throttle = false;
+    w.brake = false;
 
     const result = finalizeRun(profileRef.current, w);
     profileRef.current = result.profile;
@@ -360,6 +364,9 @@ export default function TxtrScreen() {
     const w = worldRef.current;
     if (!w || w.state !== 'playing') return;
     w.state = 'paused';
+    // the pedals unmount with the pause overlay, so their release never fires
+    w.throttle = false;
+    w.brake = false;
     setPhase('paused');
     setOverlayBoth('pause');
   }, [setOverlayBoth, setPhase]);
@@ -457,6 +464,7 @@ export default function TxtrScreen() {
         shield: w.shield,
         magnet: w.magnet,
         boost: w.boost,
+        speedRatio: w.speedRatio,
       });
     }, 50);
     return () => clearInterval(id);
@@ -507,6 +515,17 @@ export default function TxtrScreen() {
     const w = worldRef.current;
     if (!w) return;
     moveLane(w, dir);
+  }, []);
+
+  // Pedals write straight into the world — no re-render needed for a held button.
+  const handleThrottle = useCallback((down: boolean) => {
+    const w = worldRef.current;
+    if (w) w.throttle = down;
+  }, []);
+
+  const handleBrake = useCallback((down: boolean) => {
+    const w = worldRef.current;
+    if (w) w.brake = down;
   }, []);
 
   const handleMute = useCallback(() => {
@@ -631,6 +650,16 @@ export default function TxtrScreen() {
         width={winW}
         height={gameH}
         buttonsBottom={insets.bottom + (landscape ? 16 : 28)}
+        sidePad={sidePad}
+        enabled={phase === 'playing'}
+      />
+
+      <TxtrPedals
+        onThrottle={handleThrottle}
+        onBrake={handleBrake}
+        speedRatio={hud.speedRatio}
+        boosting={hud.boost > 0}
+        bottom={insets.bottom + (landscape ? 16 : 28)}
         sidePad={sidePad}
         enabled={phase === 'playing'}
       />

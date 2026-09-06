@@ -122,8 +122,10 @@ export default function StartOverlay({
       </Row>
 
       <Text style={styles.hint} allowFontScaling={false}>
-        Tap a side, swipe, or use the <Text style={styles.hintB}>◀ ▶</Text> arrows to steer · grab
-        coins and power-ups · <Text style={styles.hintB}>⏸</Text> to pause
+        <Text style={styles.hintB}>◀ ▶</Text> steer (or swipe) · hold{' '}
+        <Text style={styles.hintB}>GAS</Text> to outrun the pack,{' '}
+        <Text style={styles.hintB}>BRAKE</Text> to thread traffic · the faster you go, the sooner it
+        arrives
       </Text>
     </>
   );
