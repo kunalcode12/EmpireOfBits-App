@@ -97,6 +97,7 @@ export default function RootLayout() {
                     <Stack.Screen name="arena-blitz" options={{ gestureEnabled: false }} />
                     <Stack.Screen name="arena-result" />
                     <Stack.Screen name="arena-shop" />
+                    <Stack.Screen name="txtr" options={{ gestureEnabled: false }} />
                     <Stack.Screen name="(tabs)" />
                   </Stack>
                   <StatusBar style="light" />

@@ -2,3 +2,4 @@ backendEob/
 .git/
 node_modules/
 android/
+extraFiles/

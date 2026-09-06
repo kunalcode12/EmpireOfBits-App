@@ -76,6 +76,7 @@ const TRADE_POINTS = 100;
 const TRADE_SOL = 0.001;
 const TRADE_FEE_BUFFER_LAMPORTS = 10_000;
 const CHESS_ENTRY_COST = 50;
+const TXTR_ENTRY_COST = 50;
 const SWIPE_KNOB_SIZE = 48;
 const SWIPE_MAX_DISTANCE = SCREEN_WIDTH * 0.62;
 
@@ -412,6 +413,27 @@ function ArenaIllustration() {
       </View>
       <View style={tileStyles.arenaNewBadge}>
         <Text style={tileStyles.arenaNewText}>NEW</Text>
+      </View>
+    </View>
+  );
+}
+
+function TxtrIllustration() {
+  return (
+    <View style={tileStyles.txtrWrap}>
+      <View style={tileStyles.txtrRoad}>
+        {[0, 1, 2].map((i) => (
+          <View key={`l${i}`} style={[tileStyles.txtrDash, { top: 6 + i * 24, left: 22 }]} />
+        ))}
+        {[0, 1, 2].map((i) => (
+          <View key={`r${i}`} style={[tileStyles.txtrDash, { top: 6 + i * 24, left: 50 }]} />
+        ))}
+        <View style={tileStyles.txtrCar}>
+          <View style={tileStyles.txtrCarRoof} />
+        </View>
+      </View>
+      <View style={tileStyles.txtrBubble}>
+        <Text style={tileStyles.txtrBubbleText}>···</Text>
       </View>
     </View>
   );
@@ -885,6 +907,9 @@ export function ArcadeCenterScreen() {
   const [chessLoading, setChessLoading] = useState(false);
   const [chessEntryModalOpen, setChessEntryModalOpen] = useState(false);
   const [chessEntryCharging, setChessEntryCharging] = useState(false);
+  const [txtrLoading, setTxtrLoading] = useState(false);
+  const [txtrEntryModalOpen, setTxtrEntryModalOpen] = useState(false);
+  const [txtrEntryCharging, setTxtrEntryCharging] = useState(false);
   const [tradeBusy, setTradeBusy] = useState(false);
   const [tradeStatusText, setTradeStatusText] = useState<string | null>(null);
   const [tradeDrawerOpen, setTradeDrawerOpen] = useState(false);
@@ -1434,6 +1459,43 @@ export function ArcadeCenterScreen() {
     }
   };
 
+  // ─── TXTR (endless runner) entry ───────────────────────────────────────────
+  // Same 50-point fee as chess, but its own till: the runner refunds the fee if
+  // the player backs out without starting a run.
+  const handleTxtrPress = async () => {
+    if (!privyReady || !privyUser || txtrLoading) return;
+    setTxtrLoading(true);
+    try {
+      const isLinked = await ensureChessAuth();
+      if (!auth.user && !isLinked) return;
+      void refreshPoints().catch(() => {});
+      setTxtrEntryModalOpen(true);
+    } catch (error) {
+      console.log('TXTR entry flow failed:', error);
+    } finally {
+      setTxtrLoading(false);
+    }
+  };
+
+  const handleTxtrEntryConfirm = useCallback(async () => {
+    if (txtrEntryCharging) return;
+    if ((points ?? 0) < TXTR_ENTRY_COST) return;
+    setTxtrEntryCharging(true);
+    try {
+      await applyPointsDelta(-TXTR_ENTRY_COST);
+      setTxtrEntryModalOpen(false);
+      // `paid=1` tells the runner the entry fee is already covered.
+      router.push('/txtr?paid=1' as never);
+    } catch (error) {
+      Alert.alert(
+        'Unable to start',
+        error instanceof Error ? error.message : 'Point deduction failed.',
+      );
+    } finally {
+      setTxtrEntryCharging(false);
+    }
+  }, [applyPointsDelta, points, txtrEntryCharging]);
+
   const handleChessEntryConfirm = useCallback(async () => {
     if (chessEntryCharging || chessLoading) return;
     if ((points ?? 0) < CHESS_ENTRY_COST) {
@@ -1586,6 +1648,15 @@ export function ArcadeCenterScreen() {
             onPress={() => router.push('/arena-lobby' as never)}
           />
           <GameCard
+            title="TXTR"
+            subtitle={`ENDLESS RUNNER · ${TXTR_ENTRY_COST} PTS`}
+            borderColor="#ff4d5e"
+            glowColor="#ff4d5e"
+            illustration={<TxtrIllustration />}
+            pixelLoaded={pixelLoaded}
+            onPress={() => void handleTxtrPress()}
+          />
+          <GameCard
             title="TIC TAC TOE"
             subtitle="ARCADE · LOCKED"
             borderColor="#3a3a3a"
@@ -1720,7 +1791,11 @@ export function ArcadeCenterScreen() {
         </View>
       )}
 
-      {(tradeDrawerOpen || chessLoading || chessEntryModalOpen) && (
+      {(tradeDrawerOpen ||
+        chessLoading ||
+        chessEntryModalOpen ||
+        txtrLoading ||
+        txtrEntryModalOpen) && (
         <View style={styles.overlayBlocker} pointerEvents="box-none">
           {tradeDrawerOpen && (
             <>
@@ -1852,6 +1927,115 @@ export function ArcadeCenterScreen() {
               </View>
             </View>
           )}
+          {txtrLoading && (
+            <View style={styles.chessLoaderOverlay}>
+              <View style={styles.chessLoaderCard}>
+                <ActivityIndicator size="large" color="#ff4d5e" />
+                <Text style={styles.chessLoaderTitle}>WARMING UP THE ENGINE...</Text>
+              </View>
+            </View>
+          )}
+          {txtrEntryModalOpen && (() => {
+            const balance = points ?? 0;
+            const short = !pointsLoading && balance < TXTR_ENTRY_COST;
+            return (
+              <View style={styles.chessLoaderOverlay}>
+                <View style={styles.raceCard}>
+                  {/* checkered header strip — this is a race pass, not a chess match */}
+                  <View style={styles.raceFlagStrip}>
+                    {Array.from({ length: 18 }).map((_, i) => (
+                      <View
+                        key={i}
+                        style={[
+                          styles.raceFlagCell,
+                          i % 2 === 0 ? styles.raceFlagDark : styles.raceFlagLight,
+                        ]}
+                      />
+                    ))}
+                  </View>
+
+                  <View style={styles.raceBody}>
+                    <View style={styles.raceHeaderRow}>
+                      <MaterialCommunityIcons name="car-sports" size={26} color="#ff4d5e" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.raceKicker}>RACE PASS</Text>
+                        <Text style={pixelLoaded ? styles.raceTitlePixel : styles.raceTitleFallback}>
+                          TXTR
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.raceTicket}>
+                      <View style={styles.raceTicketRow}>
+                        <Text style={styles.raceTicketLabel}>ENTRY FEE</Text>
+                        <Text style={styles.raceTicketCost}>−{TXTR_ENTRY_COST}</Text>
+                      </View>
+                      <View style={styles.racePerforation} />
+                      <View style={styles.raceTicketRow}>
+                        <Text style={styles.raceTicketLabel}>YOUR POINTS</Text>
+                        {pointsLoading ? (
+                          <ActivityIndicator size="small" color={NEON_YELLOW} />
+                        ) : (
+                          <Text style={styles.raceTicketValue}>{points ?? '--'}</Text>
+                        )}
+                      </View>
+                      {!short && (
+                        <View style={styles.raceTicketRow}>
+                          <Text style={styles.raceTicketLabel}>AFTER</Text>
+                          <Text style={styles.raceTicketAfter}>
+                            {Math.max(0, balance - TXTR_ENTRY_COST)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <Text style={[styles.raceNote, short && styles.raceNoteBad]}>
+                      {short
+                        ? `Not enough points — you need ${TXTR_ENTRY_COST - balance} more.`
+                        : 'Coins collected during the run are paid back as points.'}
+                    </Text>
+
+                    <View style={styles.raceButtons}>
+                      <Pressable
+                        style={[styles.raceBtn, styles.raceCancelBtn]}
+                        onPress={() => setTxtrEntryModalOpen(false)}
+                        disabled={txtrEntryCharging}
+                      >
+                        <Text style={styles.raceCancelText}>CANCEL</Text>
+                      </Pressable>
+                      {short ? (
+                        <Pressable
+                          style={[styles.raceBtn, styles.raceBuyBtn]}
+                          onPress={() => {
+                            setTxtrEntryModalOpen(false);
+                            void openTradeDrawer('BUY');
+                          }}
+                        >
+                          <MaterialCommunityIcons name="cart-plus" size={15} color={BG} />
+                          <Text style={styles.raceGoText}>BUY POINTS</Text>
+                        </Pressable>
+                      ) : (
+                        <Pressable
+                          style={[styles.raceBtn, styles.raceGoBtn, txtrEntryCharging && styles.utilityBtnDisabled]}
+                          onPress={() => void handleTxtrEntryConfirm()}
+                          disabled={txtrEntryCharging || pointsLoading}
+                        >
+                          {txtrEntryCharging ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <>
+                              <MaterialCommunityIcons name="flag-checkered" size={15} color="#fff" />
+                              <Text style={styles.raceGoTextLight}>FLOOR IT</Text>
+                            </>
+                          )}
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              </View>
+            );
+          })()}
           {chessEntryModalOpen && (
             <View style={styles.chessLoaderOverlay}>
               <View style={styles.chessEntryModalCard}>
@@ -2345,6 +2529,65 @@ const tileStyles = StyleSheet.create({
     fontWeight: '900',
     color: '#fff',
     letterSpacing: 1,
+  },
+  txtrWrap: {
+    width: 88,
+    height: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  txtrRoad: {
+    width: 80,
+    height: 80,
+    backgroundColor: '#2a2a33',
+    borderLeftWidth: 3,
+    borderRightWidth: 3,
+    borderColor: '#ffd23f',
+  },
+  txtrDash: {
+    position: 'absolute',
+    width: 4,
+    height: 13,
+    backgroundColor: '#f4f4f8',
+    opacity: 0.85,
+  },
+  txtrCar: {
+    position: 'absolute',
+    bottom: 8,
+    left: 30,
+    width: 20,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#ff4d5e',
+    borderWidth: 2,
+    borderColor: '#1b1b2b',
+  },
+  txtrCarRoof: {
+    position: 'absolute',
+    left: 3,
+    right: 3,
+    top: 4,
+    height: 9,
+    borderRadius: 3,
+    backgroundColor: '#21384f',
+  },
+  txtrBubble: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#fffaf0',
+    borderWidth: 2,
+    borderColor: '#1b1b2b',
+    borderRadius: 8,
+    borderBottomLeftRadius: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  txtrBubbleText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#1b1b2b',
+    lineHeight: 14,
   },
 });
 
@@ -3049,6 +3292,160 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 1.4,
     textAlign: 'center',
+  },
+  // ─── TXTR race pass (deliberately unlike the chess entry card) ────────────
+  raceCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#ff4d5e',
+    backgroundColor: '#0d0d10',
+    overflow: 'hidden',
+    shadowColor: '#ff4d5e',
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
+  },
+  raceFlagStrip: {
+    flexDirection: 'row',
+    height: 14,
+  },
+  raceFlagCell: {
+    flex: 1,
+    height: '100%',
+  },
+  raceFlagDark: {
+    backgroundColor: '#1b1b2b',
+  },
+  raceFlagLight: {
+    backgroundColor: '#f4f4f8',
+  },
+  raceBody: {
+    padding: 18,
+    gap: 12,
+  },
+  raceHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  raceKicker: {
+    color: DIM,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2.2,
+  },
+  raceTitlePixel: {
+    fontFamily: PIXEL_FONT,
+    color: '#ff4d5e',
+    fontSize: 17,
+    letterSpacing: 1,
+    marginTop: 4,
+  },
+  raceTitleFallback: {
+    color: '#ff4d5e',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  raceTicket: {
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  raceTicketRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  raceTicketLabel: {
+    color: DIM,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  raceTicketValue: {
+    color: INK,
+    fontSize: 18,
+    fontWeight: '900',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  raceTicketCost: {
+    color: '#ff4d5e',
+    fontSize: 18,
+    fontWeight: '900',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  raceTicketAfter: {
+    color: '#22c55e',
+    fontSize: 18,
+    fontWeight: '900',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  racePerforation: {
+    borderBottomWidth: 1.5,
+    borderStyle: 'dashed',
+    borderBottomColor: 'rgba(255,255,255,0.22)',
+  },
+  raceNote: {
+    color: DIM,
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  raceNoteBad: {
+    color: '#ff6b7d',
+  },
+  raceButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  raceBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  raceCancelBtn: {
+    borderColor: 'rgba(255,255,255,0.28)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  raceCancelText: {
+    color: DIM,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+  },
+  raceGoBtn: {
+    borderColor: '#ff4d5e',
+    backgroundColor: '#ff4d5e',
+  },
+  raceBuyBtn: {
+    borderColor: NEON_YELLOW,
+    backgroundColor: NEON_YELLOW,
+  },
+  raceGoText: {
+    color: BG,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+  },
+  raceGoTextLight: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
   },
   chessEntryModalCard: {
     width: '100%',
